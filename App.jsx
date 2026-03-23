@@ -3,17 +3,18 @@ import { useState, useMemo, useEffect, useCallback } from "react";
 const CURVA_COLORS = { A: "#dc2626", B: "#d97706", C: "#16a34a", "": "#94a3b8" };
 const WAREHOUSE = {
   ruas: [
-    { id: "R1", label: "RUA 1", posicoes: 4,  andares: 4, tipo: "seufull"  },
-    { id: "R2", label: "RUA 2", posicoes: 10, andares: 4, tipo: "seufull"  },
-    { id: "R3", label: "RUA 3", posicoes: 10, andares: 4, tipo: "mianofix" },
-    { id: "R4", label: "RUA 4", posicoes: 10, andares: 4, tipo: "mianofix" },
-    { id: "R5", label: "RUA 5", posicoes: 10, andares: 4, tipo: "mianofix" },
+    { id: "R1", label: "RUA 1", vaos: 4,  andares: 4, tipo: "seufull"  },
+    { id: "R2", label: "RUA 2", vaos: 10, andares: 4, tipo: "seufull"  },
+    { id: "R3", label: "RUA 3", vaos: 10, andares: 4, tipo: "mianofix" },
+    { id: "R4", label: "RUA 4", vaos: 10, andares: 4, tipo: "mianofix" },
+    { id: "R5", label: "RUA 5", vaos: 10, andares: 4, tipo: "mianofix" },
   ],
 };
+const LADOS = ["A","B"];
 const EMPTY = { sku:"", nome:"", qtd:"", valorUnit:"", curva:"", loja:"", obs:"" };
-const STORAGE_KEY = "wms_several_v2";
+const STORAGE_KEY = "wms_several_v3";
 
-function cellId(r,p,a){ return `${r}-P${String(p).padStart(2,"0")}-A${a}`; }
+function cellId(r,v,l,a){ return `${r}-P${String(v).padStart(2,"0")}${l}-A${a}`; }
 function loadLocal(){ try { const r=localStorage.getItem(STORAGE_KEY); return r?JSON.parse(r):{}; } catch(e){ return {}; } }
 function saveLocal(d){ try { localStorage.setItem(STORAGE_KEY,JSON.stringify(d)); } catch(e){} }
 
@@ -77,8 +78,8 @@ export default function App() {
   function clearCell(){ if(!sel) return; const n={...cells}; delete n[sel]; persist(n); setSel(null); showToast("Posição limpa.","warn"); }
 
   function exportCSV(){
-    const h=["Posição","Rua","Pos","Andar","SKU","Nome","Qtd","Vlr Unit","Vlr Total","Curva","Loja","Obs"];
-    const rows=allCells.map(r=>[r.id,r.rua,r.pos,r.andar,r.sku,r.nome,r.qtd,r.valorUnit,
+    const h=["Posição","Rua","Vão","Lado","Andar","SKU","Nome","Qtd","Vlr Unit","Vlr Total","Curva","Loja","Obs"];
+    const rows=allCells.map(r=>[r.id,r.rua,r.vao,r.lado,r.andar,r.sku,r.nome,r.qtd,r.valorUnit,
       ((parseFloat(r.qtd)||0)*(parseFloat(r.valorUnit)||0)).toFixed(2),r.curva,r.loja,r.obs]);
     const csv=[h,...rows].map(r=>r.map(v=>`"${String(v||"").replace(/"/g,'""')}"`).join(";")).join("\n");
     const blob=new Blob(["\uFEFF"+csv],{type:"text/csv;charset=utf-8;"});
@@ -89,11 +90,12 @@ export default function App() {
   const allCells=useMemo(()=>{
     const rows=[];
     WAREHOUSE.ruas.forEach(rua=>{
-      for(let p=1;p<=rua.posicoes;p++)
-        for(let a=1;a<=rua.andares;a++){
-          const id=cellId(rua.id,p,a),c=cells[id];
-          if(c&&c.sku) rows.push({id,rua:rua.id,pos:p,andar:a,tipo:rua.tipo,...c});
-        }
+      for(let v=1;v<=rua.vaos;v++)
+        for(const lado of LADOS)
+          for(let a=1;a<=rua.andares;a++){
+            const id=cellId(rua.id,v,lado,a),c=cells[id];
+            if(c&&c.sku) rows.push({id,rua:rua.id,vao:v,lado,andar:a,tipo:rua.tipo,...c});
+          }
     });
     return rows;
   },[cells]);
@@ -111,6 +113,7 @@ export default function App() {
   const selParts=sel?sel.split("-"):[];
   const selRuaObj=WAREHOUSE.ruas.find(r=>r.id===selParts[0]);
   const selAndar=selParts[2]?parseInt(selParts[2].replace("A","")):0;
+  const selLado=selParts[1]?selParts[1].slice(-1):"";
   const alertaAlto=selAndar>=3;
 
   const cloudInfo={
@@ -138,9 +141,8 @@ export default function App() {
         .nb:hover:not(.on){background:#ffffff22;color:#fff;}
         .toolbar{background:#0f2942;padding:10px 28px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;border-bottom:2px solid #1e3a5f;}
         .toolbar span{font-size:13px;color:#7dd3fc;font-weight:600;}
-        .tbtn{padding:8px 18px;font-family:inherit;font-size:13px;font-weight:700;border:1.5px solid;border-radius:6px;cursor:pointer;transition:all .15s;}
+        .tbtn{padding:8px 18px;font-family:inherit;font-size:13px;font-weight:700;border:1.5px solid;border-radius:6px;cursor:pointer;}
         .tbtn-csv{background:#1c1917;color:#fb923c;border-color:#ea580c;}
-        .tbtn-csv:hover{background:#7c2d12;}
         .kbar{background:#fff;border-bottom:2px solid #e2e8f0;padding:14px 28px;display:flex;gap:12px;flex-wrap:wrap;}
         .kpi{background:#f8fafc;border:1.5px solid #e2e8f0;border-radius:8px;padding:11px 20px;min-width:130px;}
         .kpi-l{font-size:11px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:.5px;}
@@ -153,21 +155,23 @@ export default function App() {
         .ld{width:18px;height:18px;border-radius:4px;border:2px solid;}
         .wh{background:#fff;border:1.5px solid #e2e8f0;border-radius:10px;padding:24px;overflow-x:auto;box-shadow:0 2px 8px #0001;}
         .corredor{background:#dbeafe;border:2px dashed #93c5fd;padding:10px 16px;font-size:12px;font-weight:700;letter-spacing:2px;color:#1d4ed8;text-align:center;border-radius:6px;margin:12px 0;}
-        .rua-block{display:flex;align-items:flex-start;gap:16px;margin-bottom:10px;}
+        .rua-block{display:flex;align-items:flex-start;gap:16px;margin-bottom:12px;}
         .rua-lbl{width:72px;flex-shrink:0;padding-top:8px;}
         .rua-lbl-main{font-size:15px;font-weight:800;color:#1e293b;}
         .rua-lbl-sub{font-size:11px;font-weight:700;margin-top:3px;}
         .andares{display:flex;flex-direction:column-reverse;gap:4px;}
-        .andar-row{display:flex;gap:4px;align-items:center;}
-        .a-lbl{width:28px;font-size:12px;font-weight:700;color:#94a3b8;text-align:right;flex-shrink:0;}
-        .cell{border-radius:6px;cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;transition:all .15s;border:2px solid;flex-shrink:0;gap:3px;}
-        .cell:hover{transform:scale(1.08);box-shadow:0 4px 14px #0003;z-index:5;}
+        .andar-row{display:flex;gap:2px;align-items:center;}
+        .a-lbl{width:28px;font-size:12px;font-weight:700;color:#94a3b8;text-align:right;flex-shrink:0;margin-right:2px;}
+        .vao-group{display:flex;gap:1px;margin-right:4px;}
+        .cell{border-radius:4px;cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;transition:all .15s;border:2px solid;flex-shrink:0;gap:2px;position:relative;}
+        .cell:hover{transform:scale(1.12);box-shadow:0 4px 14px #0003;z-index:5;}
         .cell-acesso{border:2px dashed #e2e8f0!important;background:#f8fafc!important;cursor:default;}
         .cell-dot{border-radius:50%;}
-        .cell-sku{font-size:9px;font-weight:800;color:#374151;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:0 3px;text-align:center;}
-        .cell-plus{font-size:20px;color:#cbd5e1;font-weight:300;line-height:1;}
-        .p-lbl-row{display:flex;gap:4px;padding-left:32px;margin-top:6px;}
-        .p-lbl{font-size:10px;font-weight:600;color:#cbd5e1;text-align:center;flex-shrink:0;}
+        .cell-sku{font-size:8px;font-weight:800;color:#374151;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:0 2px;text-align:center;}
+        .cell-plus{font-size:16px;color:#cbd5e1;font-weight:300;line-height:1;}
+        .lado-tag{position:absolute;top:1px;left:2px;font-size:7px;font-weight:800;color:#94a3b8;}
+        .vao-lbl-row{display:flex;gap:4px;padding-left:32px;margin-top:5px;}
+        .vao-lbl{font-size:9px;font-weight:600;color:#cbd5e1;text-align:center;flex-shrink:0;}
         .overlay{position:fixed;inset:0;background:#0006;display:flex;align-items:center;justify-content:center;z-index:200;}
         .modal{background:#fff;border-radius:12px;width:520px;max-width:95vw;max-height:92vh;overflow-y:auto;box-shadow:0 24px 64px #0005;}
         .modal-hdr{background:#1e3a5f;color:#fff;padding:22px 28px;border-radius:12px 12px 0 0;}
@@ -191,10 +195,10 @@ export default function App() {
         .filters input:focus,.filters select:focus{border-color:#1d4ed8;}
         .tbl-wrap{background:#fff;border:1.5px solid #e2e8f0;border-radius:10px;overflow:hidden;}
         table{width:100%;border-collapse:collapse;font-size:14px;}
-        th{background:#f1f5f9;color:#374151;text-transform:uppercase;letter-spacing:.8px;font-size:12px;font-weight:700;padding:13px 16px;text-align:left;border-bottom:2px solid #e2e8f0;white-space:nowrap;}
-        td{padding:12px 16px;border-bottom:1px solid #f1f5f9;color:#334155;}
+        th{background:#f1f5f9;color:#374151;text-transform:uppercase;letter-spacing:.8px;font-size:11px;font-weight:700;padding:12px 14px;text-align:left;border-bottom:2px solid #e2e8f0;white-space:nowrap;}
+        td{padding:11px 14px;border-bottom:1px solid #f1f5f9;color:#334155;}
         tr:hover td{background:#f8fafc;} tr:last-child td{border-bottom:none;}
-        .badge{display:inline-block;padding:4px 12px;border-radius:20px;font-size:12px;font-weight:700;}
+        .badge{display:inline-block;padding:3px 10px;border-radius:20px;font-size:12px;font-weight:700;}
         .badge-A{background:#fef2f2;color:#dc2626;} .badge-B{background:#fffbeb;color:#b45309;} .badge-C{background:#f0fdf4;color:#15803d;}
         .badge-sf{background:#eff6ff;color:#1d4ed8;} .badge-mn{background:#fffbeb;color:#b45309;}
         .fin-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px;margin-bottom:24px;}
@@ -227,7 +231,7 @@ export default function App() {
       </div>
 
       <div className="toolbar">
-        <span>☁ Firebase Google Cloud — dados salvos em tempo real</span>
+        <span>☁ Firebase Google Cloud · cada vão tem Lado A e Lado B</span>
         <button className="tbtn tbtn-csv" onClick={exportCSV} style={{marginLeft:"auto"}}>📊 Exportar Excel (.csv)</button>
       </div>
 
@@ -242,18 +246,19 @@ export default function App() {
 
       <div className="main">
         {view==="mapa"&&<>
-          <div className="sec-title">Layout do Armazém — clique em qualquer posição para editar</div>
+          <div className="sec-title">Layout do Armazém — cada vão tem Lado A e Lado B</div>
           <div className="legend">
             <div className="li"><div className="ld" style={{background:"#eff6ff",borderColor:"#93c5fd"}}></div>Seu Full — vazio</div>
             <div className="li"><div className="ld" style={{background:"#fffbeb",borderColor:"#fcd34d"}}></div>Mianofix — vazio</div>
             <div className="li"><div className="ld" style={{background:"#fef2f2",borderColor:"#fca5a5"}}></div>Curva A</div>
             <div className="li"><div className="ld" style={{background:"#fffbeb",borderColor:"#fcd34d"}}></div>Curva B</div>
             <div className="li"><div className="ld" style={{background:"#f0fdf4",borderColor:"#86efac"}}></div>Curva C</div>
-            <div style={{marginLeft:"auto",background:"#fefce8",border:"1.5px solid #fde047",borderRadius:"6px",padding:"6px 14px",fontSize:"12px",color:"#854d0e",fontWeight:700}}>⚠ Andares 3 e 4 → somente Curva B ou C</div>
+            <div style={{marginLeft:"auto",background:"#fefce8",border:"1.5px solid #fde047",borderRadius:"6px",padding:"6px 14px",fontSize:"12px",color:"#854d0e",fontWeight:700}}>⚠ Andares 3 e 4 → só Curva B ou C</div>
           </div>
           <div className="wh">
             {WAREHOUSE.ruas.map((rua,ri)=>{
-              const W=rua.posicoes<=4?82:68,H=50;
+              const CW=28, CH=42;
+              const isLastAcesso = rua.vaos===10;
               return(<div key={rua.id}>
                 {(ri===2||ri===4)&&<div className="corredor">— CORREDOR —</div>}
                 <div className="rua-block">
@@ -266,22 +271,44 @@ export default function App() {
                       {[4,3,2,1].map(andar=>(
                         <div key={andar} className="andar-row">
                           <div className="a-lbl">A{andar}</div>
-                          {Array.from({length:rua.posicoes},(_,pi)=>{
-                            const pos=pi+1,id=cellId(rua.id,pos,andar);
-                            const isAcc=rua.posicoes===10&&pos===10;
-                            const c=cells[id],has=c&&c.sku;
-                            if(isAcc) return <div key={id} className="cell cell-acesso" style={{width:W,height:H}}><span style={{fontSize:"10px",color:"#94a3b8",fontWeight:700}}>ACESSO</span></div>;
-                            let bg,bc;
-                            if(!has){bg=rua.tipo==="seufull"?"#eff6ff":"#fffbeb";bc=rua.tipo==="seufull"?"#93c5fd":"#fcd34d";}
-                            else{const cv=c.curva||"X";const bgs={A:"#fef2f2",B:"#fffbeb",C:"#f0fdf4",X:"#f8fafc"};const bcs={A:"#fca5a5",B:"#fcd34d",C:"#86efac",X:"#e2e8f0"};bg=bgs[cv];bc=bcs[cv];}
-                            return(<div key={id} className="cell" style={{width:W,height:H,background:bg,borderColor:bc}} title={has?`${c.sku} · ${c.nome}`:id+" — vazio"} onClick={()=>openCell(id)}>
-                              {has?<><div className="cell-dot" style={{width:9,height:9,background:CURVA_COLORS[c.curva||""]}}></div><div className="cell-sku" style={{width:W-10}}>{c.sku}</div></>:<span className="cell-plus">+</span>}
-                            </div>);
+                          {Array.from({length:rua.vaos},(_,vi)=>{
+                            const vao=vi+1;
+                            const isAcesso=isLastAcesso&&vao===rua.vaos;
+                            if(isAcesso) return(
+                              <div key={vao} className="vao-group">
+                                <div className="cell cell-acesso" style={{width:CW*2+1,height:CH}}>
+                                  <span style={{fontSize:"8px",color:"#94a3b8",fontWeight:700}}>ACESSO</span>
+                                </div>
+                              </div>
+                            );
+                            return(
+                              <div key={vao} className="vao-group">
+                                {LADOS.map(lado=>{
+                                  const id=cellId(rua.id,vao,lado,andar);
+                                  const c=cells[id],has=c&&c.sku;
+                                  let bg,bc;
+                                  if(!has){bg=rua.tipo==="seufull"?"#eff6ff":"#fffbeb";bc=rua.tipo==="seufull"?"#93c5fd":"#fcd34d";}
+                                  else{const cv=c.curva||"X";const bgs={A:"#fef2f2",B:"#fffbeb",C:"#f0fdf4",X:"#f8fafc"};const bcs={A:"#fca5a5",B:"#fcd34d",C:"#86efac",X:"#e2e8f0"};bg=bgs[cv];bc=bcs[cv];}
+                                  return(
+                                    <div key={lado} className="cell" style={{width:CW,height:CH,background:bg,borderColor:bc}}
+                                      title={has?`${c.sku} · ${c.nome}`:id+" — vazio"}
+                                      onClick={()=>openCell(id)}>
+                                      <span className="lado-tag">{lado}</span>
+                                      {has?<><div className="cell-dot" style={{width:7,height:7,background:CURVA_COLORS[c.curva||""]}}></div><div className="cell-sku" style={{width:CW-6}}>{c.sku}</div></>:<span className="cell-plus">+</span>}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            );
                           })}
                         </div>
                       ))}
                     </div>
-                    <div className="p-lbl-row">{Array.from({length:rua.posicoes},(_,pi)=><div key={pi} className="p-lbl" style={{width:W}}>P{pi+1}</div>)}</div>
+                    <div className="vao-lbl-row">
+                      {Array.from({length:rua.vaos},(_,vi)=>(
+                        <div key={vi} className="vao-lbl" style={{width:CW*2+1+4}}>P{vi+1}</div>
+                      ))}
+                    </div>
                   </div>
                 </div>
               </div>);
@@ -317,19 +344,21 @@ export default function App() {
           {filtered.length===0
             ?<div className="empty-state"><div className="icon">📭</div>Nenhum item encontrado.<br/>Vá ao Mapa e clique em uma posição para alocar produtos.</div>
             :<div className="tbl-wrap"><table>
-              <thead><tr><th>Posição</th><th>Área</th><th>SKU</th><th>Nome</th><th style={{textAlign:"right"}}>Qtd</th><th style={{textAlign:"right"}}>Vlr Unit</th><th style={{textAlign:"right"}}>Vlr Total</th><th>Curva</th><th>Loja</th><th>Obs</th></tr></thead>
+              <thead><tr><th>Posição</th><th>Área</th><th>Vão</th><th>Lado</th><th>Andar</th><th>SKU</th><th>Nome</th><th style={{textAlign:"right"}}>Qtd</th><th style={{textAlign:"right"}}>Vlr Unit</th><th style={{textAlign:"right"}}>Vlr Total</th><th>Curva</th><th>Loja</th></tr></thead>
               <tbody>{filtered.map(r=>(
                 <tr key={r.id} style={{cursor:"pointer"}} onClick={()=>openCell(r.id)}>
                   <td style={{fontWeight:800,color:"#1e3a5f"}}>{r.id}</td>
                   <td><span className={`badge badge-${r.tipo==="seufull"?"sf":"mn"}`}>{r.tipo==="seufull"?"SEU FULL":"MIANOFIX"}</span></td>
+                  <td style={{fontWeight:600}}>P{r.vao}</td>
+                  <td><span style={{fontWeight:800,color:r.lado==="A"?"#1d4ed8":"#b45309"}}>Lado {r.lado}</span></td>
+                  <td>A{r.andar}</td>
                   <td style={{fontWeight:700}}>{r.sku}</td>
-                  <td style={{maxWidth:180,overflow:"hidden",textOverflow:"ellipsis"}}>{r.nome}</td>
+                  <td style={{maxWidth:160,overflow:"hidden",textOverflow:"ellipsis"}}>{r.nome}</td>
                   <td style={{textAlign:"right",fontWeight:700}}>{parseFloat(r.qtd||0).toLocaleString("pt-BR")}</td>
                   <td style={{textAlign:"right"}}>R$ {parseFloat(r.valorUnit||0).toLocaleString("pt-BR",{minimumFractionDigits:2})}</td>
                   <td style={{textAlign:"right",fontWeight:800,color:"#15803d"}}>R$ {((parseFloat(r.qtd)||0)*(parseFloat(r.valorUnit)||0)).toLocaleString("pt-BR",{minimumFractionDigits:2})}</td>
                   <td>{r.curva&&<span className={`badge badge-${r.curva}`}>{r.curva}</span>}</td>
                   <td style={{color:"#64748b"}}>{r.loja}</td>
-                  <td style={{color:"#94a3b8",maxWidth:120,overflow:"hidden",textOverflow:"ellipsis"}}>{r.obs}</td>
                 </tr>
               ))}</tbody>
             </table></div>
@@ -361,7 +390,7 @@ export default function App() {
               const valor=itens.reduce((s,r)=>(parseFloat(r.qtd)||0)*(parseFloat(r.valorUnit)||0)+s,0);
               const pct=totais.vt>0?(valor/totais.vt*100).toFixed(1):0;
               const clr=tipo==="seufull"?"#1d4ed8":"#b45309";
-              return <div key={tipo} className="fin-card"><div className="fin-card-title">{tipo==="seufull"?"Clientes Seu Full · Ruas 1–2":"Mianofix / Iscali · Ruas 3–5"}</div><div className="fin-card-value" style={{color:clr}}>{itens.length} SKUs</div><div className="fin-card-sub">R$ {valor.toLocaleString("pt-BR",{minimumFractionDigits:2})} · {pct}% do total</div><div className="prog-bar"><div className="prog-fill" style={{width:`${pct}%`,background:clr}}></div></div></div>;
+              return <div key={tipo} className="fin-card"><div className="fin-card-title">{tipo==="seufull"?"Clientes Seu Full · Ruas 1–2":"Mianofix / Iscali · Ruas 3–5"}</div><div className="fin-card-value" style={{color:clr}}>{itens.length} posições</div><div className="fin-card-sub">R$ {valor.toLocaleString("pt-BR",{minimumFractionDigits:2})} · {pct}% do total</div><div className="prog-bar"><div className="prog-fill" style={{width:`${pct}%`,background:clr}}></div></div></div>;
             })}
           </div>
           <div style={{background:"#fefce8",border:"2px solid #fde047",borderRadius:"10px",padding:"18px 22px",fontSize:"14px",color:"#854d0e",lineHeight:1.8,fontWeight:600}}>
@@ -375,10 +404,12 @@ export default function App() {
         <div className="modal">
           <div className="modal-hdr">
             <div className="modal-hdr-id">📍 {sel}</div>
-            <div className="modal-hdr-sub">{selRuaObj?.tipo==="seufull"?"Área Clientes Seu Full":"Área Mianofix / Iscali"} · Andar {selAndar}</div>
+            <div className="modal-hdr-sub">
+              {selRuaObj?.tipo==="seufull"?"Área Seu Full":"Área Mianofix / Iscali"} · Lado {selLado} · Andar {selAndar}
+            </div>
           </div>
           <div className="modal-body">
-            {alertaAlto&&<div className="alerta">⚠ ANDAR {selAndar} — Não alocar Curva A nesta posição. Use apenas Curva B ou C.</div>}
+            {alertaAlto&&<div className="alerta">⚠ ANDAR {selAndar} — Não alocar Curva A. Use apenas Curva B ou C.</div>}
             <div className="frow">
               <div className="field"><label>SKU / Código</label><input value={form.sku} onChange={e=>setForm(f=>({...f,sku:e.target.value}))} placeholder="EX-001"/></div>
               <div className="field"><label>Curva ABC</label><select value={form.curva} onChange={e=>setForm(f=>({...f,curva:e.target.value}))}><option value="">Selecionar...</option><option value="A">A — Alto giro</option><option value="B">B — Médio giro</option><option value="C">C — Baixo giro</option></select></div>
