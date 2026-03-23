@@ -12,6 +12,7 @@ const WAREHOUSE = {
 };
 const LADOS = ["A","B"];
 const EMPTY = { sku:"", nome:"", qtd:"", valorUnit:"", curva:"", loja:"", obs:"" };
+const EMPTY_AREA = { descricao:"", loja:"", qtd:"", valorUnit:"", obs:"" };
 const STORAGE_KEY = "wms_several_v3";
 
 function cellId(r,v,l,a){ return `${r}-P${String(v).padStart(2,"0")}${l}-A${a}`; }
@@ -45,10 +46,16 @@ async function cloudSave(cells){
   if(!r.ok) throw new Error("save_failed");
 }
 
+function isAcesso(vaos, vao, andar){
+  return vaos === 10 && vao === 10 && andar <= 2;
+}
+
 export default function App() {
   const [cells,    setCells]    = useState(loadLocal);
   const [sel,      setSel]      = useState(null);
   const [form,     setForm]     = useState(EMPTY);
+  const [areaModal,setAreaModal]= useState(null);
+  const [areaForm, setAreaForm] = useState(EMPTY_AREA);
   const [view,     setView]     = useState("mapa");
   const [fTipo,    setFTipo]    = useState("todos");
   const [fCurva,   setFCurva]   = useState("todos");
@@ -63,28 +70,39 @@ export default function App() {
     setCloud("connecting");
     cloudLoad()
       .then(data=>{ if(data){ setCells(data); saveLocal(data); } setCloud("ok"); })
-      .catch(()=>{ setCloud("error"); showToast("⚠ Usando dados locais","warn"); });
+      .catch(()=>{ setCloud("error"); showToast("Usando dados locais","warn"); });
   },[]);
 
   const persist = useCallback((newCells)=>{
     setCells(newCells); saveLocal(newCells); setCloud("saving");
     cloudSave(newCells)
       .then(()=>{ setCloud("ok"); setLastSave(new Date()); })
-      .catch(()=>{ setCloud("error"); showToast("⚠ Salvo só localmente","warn"); });
+      .catch(()=>{ setCloud("error"); showToast("Salvo so localmente","warn"); });
   },[]);
 
   function openCell(id){ setSel(id); setForm(cells[id]?{...cells[id]}:{...EMPTY}); }
-  function saveCell(){ if(!sel) return; persist({...cells,[sel]:{...form}}); setSel(null); showToast("✓ Salvo na nuvem!"); }
-  function clearCell(){ if(!sel) return; const n={...cells}; delete n[sel]; persist(n); setSel(null); showToast("Posição limpa.","warn"); }
+  function saveCell(){ if(!sel) return; persist({...cells,[sel]:{...form}}); setSel(null); showToast("Salvo na nuvem!"); }
+  function clearCell(){ if(!sel) return; const n={...cells}; delete n[sel]; persist(n); setSel(null); showToast("Posicao limpa.","warn"); }
+
+  function openArea(slot, tipo){ setAreaModal({slot,tipo}); setAreaForm(cells[slot]?{...cells[slot]}:{...EMPTY_AREA}); }
+  function saveArea(){ if(!areaModal) return; persist({...cells,[areaModal.slot]:{...areaForm,_area:areaModal.tipo}}); setAreaModal(null); showToast("Area salva na nuvem!"); }
+  function clearArea(){ if(!areaModal) return; const n={...cells}; delete n[areaModal.slot]; persist(n); setAreaModal(null); showToast("Area limpa.","warn"); }
+
+  const flexSlots = Array.from({length:20},(_,i)=>`FLEX-${String(i+1).padStart(2,"0")}`);
+  const fullSlots = Array.from({length:20},(_,i)=>`FULL-${String(i+1).padStart(2,"0")}`);
 
   function exportCSV(){
-    const h=["Posição","Rua","Vão","Lado","Andar","SKU","Nome","Qtd","Vlr Unit","Vlr Total","Curva","Loja","Obs"];
-    const rows=allCells.map(r=>[r.id,r.rua,r.vao,r.lado,r.andar,r.sku,r.nome,r.qtd,r.valorUnit,
-      ((parseFloat(r.qtd)||0)*(parseFloat(r.valorUnit)||0)).toFixed(2),r.curva,r.loja,r.obs]);
+    const h=["Posicao","Area","SKU/Desc","Qtd","Vlr Unit","Vlr Total","Curva","Loja","Obs"];
+    const rows=allCells.map(r=>[
+      r.id, r._area||r.tipo||"porta-palet",
+      r.sku||r.descricao||"", r.qtd,r.valorUnit,
+      ((parseFloat(r.qtd)||0)*(parseFloat(r.valorUnit)||0)).toFixed(2),
+      r.curva||"",r.loja||"",r.obs||""
+    ]);
     const csv=[h,...rows].map(r=>r.map(v=>`"${String(v||"").replace(/"/g,'""')}"`).join(";")).join("\n");
     const blob=new Blob(["\uFEFF"+csv],{type:"text/csv;charset=utf-8;"});
     const a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download="estoque_wms.csv"; a.click();
-    showToast("✓ CSV exportado!");
+    showToast("CSV exportado!");
   }
 
   const allCells=useMemo(()=>{
@@ -93,17 +111,26 @@ export default function App() {
       for(let v=1;v<=rua.vaos;v++)
         for(const lado of LADOS)
           for(let a=1;a<=rua.andares;a++){
+            if(isAcesso(rua.vaos,v,a)) continue;
             const id=cellId(rua.id,v,lado,a),c=cells[id];
             if(c&&c.sku) rows.push({id,rua:rua.id,vao:v,lado,andar:a,tipo:rua.tipo,...c});
           }
+    });
+    [...flexSlots,...fullSlots].forEach(slot=>{
+      const c=cells[slot];
+      if(c&&(c.descricao||c.sku)) rows.push({id:slot,tipo:slot.startsWith("FLEX")?"flex":"full",...c});
     });
     return rows;
   },[cells]);
 
   const filtered=useMemo(()=>allCells.filter(r=>{
-    if(fTipo!=="todos"&&r.tipo!==fTipo) return false;
+    if(fTipo==="flex"&&r.tipo!=="flex") return false;
+    if(fTipo==="full"&&r.tipo!=="full") return false;
+    if(fTipo==="seufull"&&r.tipo!=="seufull") return false;
+    if(fTipo==="mianofix"&&r.tipo!=="mianofix") return false;
     if(fCurva!=="todos"&&r.curva!==fCurva) return false;
-    if(search&&!r.nome?.toLowerCase().includes(search.toLowerCase())&&!r.sku?.toLowerCase().includes(search.toLowerCase())) return false;
+    const term=search.toLowerCase();
+    if(term&&!r.nome?.toLowerCase().includes(term)&&!r.sku?.toLowerCase().includes(term)&&!r.descricao?.toLowerCase().includes(term)) return false;
     return true;
   }),[allCells,fTipo,fCurva,search]);
 
@@ -117,113 +144,127 @@ export default function App() {
   const alertaAlto=selAndar>=3;
 
   const cloudInfo={
-    connecting:{label:"⏳ Conectando...",color:"#fbbf24"},
-    ok:{label:lastSave?`☁ Salvo às ${lastSave.toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"})}`:"☁ Nuvem conectada",color:"#4ade80"},
-    saving:{label:"⏫ Salvando...",color:"#60a5fa"},
-    error:{label:"⚠ Salvo localmente",color:"#fb923c"},
+    connecting:{label:"Conectando...",color:"#fbbf24"},
+    ok:{label:lastSave?`Salvo as ${lastSave.toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"})}`:"Nuvem conectada",color:"#4ade80"},
+    saving:{label:"Salvando...",color:"#60a5fa"},
+    error:{label:"Salvo localmente",color:"#fb923c"},
   }[cloud];
+
+  const CSS = `
+    *{box-sizing:border-box;margin:0;padding:0;}
+    ::-webkit-scrollbar{width:8px;height:8px;}
+    ::-webkit-scrollbar-track{background:#e2e8f0;}
+    ::-webkit-scrollbar-thumb{background:#94a3b8;border-radius:4px;}
+    .hdr{background:#1e3a5f;color:#fff;padding:12px 28px;display:flex;align-items:center;justify-content:space-between;box-shadow:0 2px 8px #0003;flex-wrap:wrap;gap:10px;}
+    .hdr-logo{font-size:18px;font-weight:700;}.hdr-sub{font-size:12px;color:#93c5fd;margin-top:2px;}
+    .hdr-right{display:flex;align-items:center;gap:12px;flex-wrap:wrap;}
+    .cloud-badge{font-size:13px;font-weight:700;padding:6px 14px;border-radius:20px;background:#ffffff22;}
+    .nav{display:flex;gap:6px;}
+    .nb{padding:9px 22px;font-family:inherit;font-size:14px;font-weight:600;border:none;border-radius:6px;cursor:pointer;background:transparent;color:#bfdbfe;transition:all .15s;}
+    .nb.on{background:#fff;color:#1e3a5f;}.nb:hover:not(.on){background:#ffffff22;color:#fff;}
+    .toolbar{background:#0f2942;padding:10px 28px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;border-bottom:2px solid #1e3a5f;}
+    .toolbar span{font-size:13px;color:#7dd3fc;font-weight:600;}
+    .tbtn{padding:8px 18px;font-family:inherit;font-size:13px;font-weight:700;border:1.5px solid;border-radius:6px;cursor:pointer;}
+    .tbtn-csv{background:#1c1917;color:#fb923c;border-color:#ea580c;}
+    .kbar{background:#fff;border-bottom:2px solid #e2e8f0;padding:14px 28px;display:flex;gap:12px;flex-wrap:wrap;}
+    .kpi{background:#f8fafc;border:1.5px solid #e2e8f0;border-radius:8px;padding:11px 20px;min-width:130px;}
+    .kpi-l{font-size:11px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:.5px;}
+    .kpi-v{font-size:24px;font-weight:800;margin-top:3px;}
+    .main{padding:24px 28px;}
+    .sec-title{font-size:13px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:#475569;margin-bottom:14px;display:flex;align-items:center;gap:8px;}
+    .sec-title::before{content:"";display:block;width:4px;height:18px;background:#1e3a5f;border-radius:2px;}
+    .legend{display:flex;gap:16px;flex-wrap:wrap;margin-bottom:16px;padding:12px 18px;background:#fff;border:1.5px solid #e2e8f0;border-radius:8px;align-items:center;}
+    .li{display:flex;align-items:center;gap:7px;font-size:13px;color:#374151;font-weight:500;}
+    .ld{width:18px;height:18px;border-radius:4px;border:2px solid;}
+    .wh{background:#fff;border:1.5px solid #e2e8f0;border-radius:10px;padding:24px;overflow-x:auto;box-shadow:0 2px 8px #0001;}
+    .corredor{background:#dbeafe;border:2px dashed #93c5fd;padding:10px 16px;font-size:12px;font-weight:700;letter-spacing:2px;color:#1d4ed8;text-align:center;border-radius:6px;margin:12px 0;}
+    .costas{background:#f1f5f9;border:1px dashed #cbd5e1;padding:3px 16px;font-size:11px;color:#94a3b8;text-align:center;border-radius:4px;margin:2px 0;}
+    .rua-block{display:flex;align-items:flex-start;gap:16px;margin-bottom:10px;}
+    .rua-lbl{width:72px;flex-shrink:0;padding-top:8px;}
+    .rua-lbl-main{font-size:15px;font-weight:800;color:#1e293b;}.rua-lbl-sub{font-size:11px;font-weight:700;margin-top:3px;}
+    .andares{display:flex;flex-direction:column-reverse;gap:4px;}
+    .andar-row{display:flex;gap:2px;align-items:center;}
+    .a-lbl{width:28px;font-size:12px;font-weight:700;color:#94a3b8;text-align:right;flex-shrink:0;margin-right:2px;}
+    .vao-group{display:flex;gap:1px;margin-right:4px;}
+    .cell{border-radius:4px;cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;transition:all .15s;border:2px solid;flex-shrink:0;gap:2px;position:relative;}
+    .cell:hover{transform:scale(1.12);box-shadow:0 4px 14px #0003;z-index:5;}
+    .cell-acesso{border:2px dashed #e2e8f0!important;background:#f8fafc!important;cursor:default;}
+    .cell-dot{border-radius:50%;}
+    .cell-sku{font-size:8px;font-weight:800;color:#374151;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:0 2px;text-align:center;}
+    .cell-plus{font-size:16px;color:#cbd5e1;font-weight:300;line-height:1;}
+    .lado-tag{position:absolute;top:1px;left:2px;font-size:7px;font-weight:800;color:#94a3b8;}
+    .vao-lbl-row{display:flex;gap:4px;padding-left:32px;margin-top:5px;}
+    .vao-lbl{font-size:9px;font-weight:600;color:#cbd5e1;text-align:center;flex-shrink:0;}
+    .areas-row{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px;}
+    .area-box{border-radius:10px;padding:16px;border:2px solid;}
+    .area-box.flex{background:#eff6ff;border-color:#93c5fd;}
+    .area-box.full{background:#f0fdf4;border-color:#86efac;}
+    .area-box-title{font-size:14px;font-weight:800;margin-bottom:12px;}
+    .area-box.flex .area-box-title{color:#1d4ed8;}
+    .area-box.full .area-box-title{color:#15803d;}
+    .slots-wrap{display:flex;flex-wrap:wrap;gap:6px;}
+    .slot{width:66px;height:50px;border-radius:6px;border:2px solid;cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;transition:all .15s;gap:2px;}
+    .slot:hover{transform:scale(1.08);box-shadow:0 3px 10px #0002;}
+    .slot.empty-flex{background:#eff6ff;border-color:#93c5fd;}
+    .slot.empty-full{background:#f0fdf4;border-color:#86efac;}
+    .slot.filled{background:#dcfce7;border-color:#4ade80;}
+    .slot-id{font-size:8px;font-weight:700;color:#94a3b8;}
+    .slot-desc{font-size:8px;font-weight:700;color:#374151;max-width:60px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:center;}
+    .slot-dot{width:8px;height:8px;border-radius:50%;background:#4ade80;}
+    .overlay{position:fixed;inset:0;background:#0006;display:flex;align-items:center;justify-content:center;z-index:200;}
+    .modal{background:#fff;border-radius:12px;width:520px;max-width:95vw;max-height:92vh;overflow-y:auto;box-shadow:0 24px 64px #0005;}
+    .modal-hdr{color:#fff;padding:22px 28px;border-radius:12px 12px 0 0;}
+    .modal-hdr.palet{background:#1e3a5f;}.modal-hdr.flex{background:#1d4ed8;}.modal-hdr.full{background:#15803d;}
+    .modal-hdr-id{font-size:20px;font-weight:800;}.modal-hdr-sub{font-size:13px;opacity:.8;margin-top:4px;}
+    .modal-body{padding:24px 28px;}
+    .alerta{background:#fef2f2;border:2px solid #fca5a5;border-radius:8px;padding:12px 16px;font-size:13px;color:#dc2626;font-weight:700;margin-bottom:16px;}
+    .field{margin-bottom:16px;}
+    .field label{display:block;font-size:12px;font-weight:700;color:#374151;text-transform:uppercase;letter-spacing:.8px;margin-bottom:6px;}
+    .field input,.field select,.field textarea{width:100%;background:#f8fafc;border:2px solid #e2e8f0;border-radius:8px;padding:12px 14px;color:#1e293b;font-family:inherit;font-size:15px;outline:none;transition:border-color .2s;}
+    .field input:focus,.field select:focus{border-color:#1d4ed8;background:#fff;}
+    .frow{display:grid;grid-template-columns:1fr 1fr;gap:14px;}
+    .vt-box{background:#f0fdf4;border:2px solid #86efac;border-radius:8px;padding:12px 16px;font-size:14px;color:#15803d;font-weight:700;margin-bottom:14px;}
+    .modal-foot{padding:18px 28px;border-top:2px solid #f1f5f9;display:flex;gap:10px;justify-content:flex-end;background:#f8fafc;border-radius:0 0 12px 12px;}
+    .btn{padding:11px 24px;font-family:inherit;font-size:14px;font-weight:700;border:none;border-radius:8px;cursor:pointer;transition:all .15s;}
+    .btn-primary{background:#1e3a5f;color:#fff;}.btn-primary:hover{background:#1d4ed8;}
+    .btn-success{background:#15803d;color:#fff;}.btn-success:hover{background:#16a34a;}
+    .btn-danger{background:#fef2f2;color:#dc2626;border:2px solid #fca5a5;}.btn-danger:hover{background:#fee2e2;}
+    .btn-ghost{background:#f1f5f9;color:#475569;border:2px solid #e2e8f0;}.btn-ghost:hover{background:#e2e8f0;}
+    .filters{display:flex;gap:10px;margin-bottom:18px;flex-wrap:wrap;align-items:center;}
+    .filters input,.filters select{background:#fff;border:2px solid #e2e8f0;border-radius:8px;padding:10px 14px;color:#1e293b;font-family:inherit;font-size:14px;outline:none;}
+    .filters input:focus,.filters select:focus{border-color:#1d4ed8;}
+    .tbl-wrap{background:#fff;border:1.5px solid #e2e8f0;border-radius:10px;overflow:hidden;}
+    table{width:100%;border-collapse:collapse;font-size:14px;}
+    th{background:#f1f5f9;color:#374151;text-transform:uppercase;letter-spacing:.8px;font-size:11px;font-weight:700;padding:12px 14px;text-align:left;border-bottom:2px solid #e2e8f0;white-space:nowrap;}
+    td{padding:11px 14px;border-bottom:1px solid #f1f5f9;color:#334155;}
+    tr:hover td{background:#f8fafc;}tr:last-child td{border-bottom:none;}
+    .badge{display:inline-block;padding:3px 10px;border-radius:20px;font-size:12px;font-weight:700;}
+    .badge-A{background:#fef2f2;color:#dc2626;}.badge-B{background:#fffbeb;color:#b45309;}.badge-C{background:#f0fdf4;color:#15803d;}
+    .badge-sf{background:#eff6ff;color:#1d4ed8;}.badge-mn{background:#fffbeb;color:#b45309;}
+    .badge-fx{background:#dbeafe;color:#1d4ed8;}.badge-fl{background:#dcfce7;color:#15803d;}
+    .fin-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px;margin-bottom:24px;}
+    .fin-card{background:#fff;border:1.5px solid #e2e8f0;border-radius:10px;padding:20px;}
+    .fin-card-title{font-size:12px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.8px;margin-bottom:8px;}
+    .fin-card-value{font-size:26px;font-weight:800;}.fin-card-sub{font-size:12px;color:#94a3b8;margin-top:5px;}
+    .prog-bar{height:7px;background:#e2e8f0;border-radius:4px;margin-top:12px;overflow:hidden;}
+    .prog-fill{height:100%;border-radius:4px;transition:width .6s;}
+    .toast{position:fixed;bottom:28px;right:28px;background:#1e3a5f;color:#fff;padding:14px 24px;border-radius:8px;font-size:14px;font-weight:700;box-shadow:0 8px 28px #0003;z-index:300;animation:slideUp .3s ease;}
+    .toast.warn{background:#b45309;}
+    @keyframes slideUp{from{transform:translateY(16px);opacity:0;}to{transform:translateY(0);opacity:1;}}
+    .empty-state{text-align:center;padding:70px 40px;color:#94a3b8;font-size:15px;line-height:1.8;}
+    .empty-state .icon{font-size:40px;margin-bottom:14px;}
+  `;
 
   return (
     <div style={{fontFamily:"'Segoe UI',system-ui,sans-serif",background:"#f1f5f9",minHeight:"100vh",color:"#1e293b"}}>
-      <style>{`
-        *{box-sizing:border-box;margin:0;padding:0;}
-        ::-webkit-scrollbar{width:8px;height:8px;}
-        ::-webkit-scrollbar-track{background:#e2e8f0;}
-        ::-webkit-scrollbar-thumb{background:#94a3b8;border-radius:4px;}
-        .hdr{background:#1e3a5f;color:#fff;padding:12px 28px;display:flex;align-items:center;justify-content:space-between;box-shadow:0 2px 8px #0003;flex-wrap:wrap;gap:10px;}
-        .hdr-logo{font-size:18px;font-weight:700;}
-        .hdr-sub{font-size:12px;color:#93c5fd;margin-top:2px;}
-        .hdr-right{display:flex;align-items:center;gap:12px;flex-wrap:wrap;}
-        .cloud-badge{font-size:13px;font-weight:700;padding:6px 14px;border-radius:20px;background:#ffffff22;}
-        .nav{display:flex;gap:6px;}
-        .nb{padding:9px 22px;font-family:inherit;font-size:14px;font-weight:600;border:none;border-radius:6px;cursor:pointer;background:transparent;color:#bfdbfe;transition:all .15s;}
-        .nb.on{background:#fff;color:#1e3a5f;}
-        .nb:hover:not(.on){background:#ffffff22;color:#fff;}
-        .toolbar{background:#0f2942;padding:10px 28px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;border-bottom:2px solid #1e3a5f;}
-        .toolbar span{font-size:13px;color:#7dd3fc;font-weight:600;}
-        .tbtn{padding:8px 18px;font-family:inherit;font-size:13px;font-weight:700;border:1.5px solid;border-radius:6px;cursor:pointer;}
-        .tbtn-csv{background:#1c1917;color:#fb923c;border-color:#ea580c;}
-        .kbar{background:#fff;border-bottom:2px solid #e2e8f0;padding:14px 28px;display:flex;gap:12px;flex-wrap:wrap;}
-        .kpi{background:#f8fafc;border:1.5px solid #e2e8f0;border-radius:8px;padding:11px 20px;min-width:130px;}
-        .kpi-l{font-size:11px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:.5px;}
-        .kpi-v{font-size:24px;font-weight:800;margin-top:3px;}
-        .main{padding:24px 28px;}
-        .sec-title{font-size:13px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:#475569;margin-bottom:14px;display:flex;align-items:center;gap:8px;}
-        .sec-title::before{content:"";display:block;width:4px;height:18px;background:#1e3a5f;border-radius:2px;}
-        .legend{display:flex;gap:16px;flex-wrap:wrap;margin-bottom:16px;padding:12px 18px;background:#fff;border:1.5px solid #e2e8f0;border-radius:8px;align-items:center;}
-        .li{display:flex;align-items:center;gap:7px;font-size:13px;color:#374151;font-weight:500;}
-        .ld{width:18px;height:18px;border-radius:4px;border:2px solid;}
-        .wh{background:#fff;border:1.5px solid #e2e8f0;border-radius:10px;padding:24px;overflow-x:auto;box-shadow:0 2px 8px #0001;}
-        .corredor{background:#dbeafe;border:2px dashed #93c5fd;padding:10px 16px;font-size:12px;font-weight:700;letter-spacing:2px;color:#1d4ed8;text-align:center;border-radius:6px;margin:12px 0;}
-        .rua-block{display:flex;align-items:flex-start;gap:16px;margin-bottom:12px;}
-        .rua-lbl{width:72px;flex-shrink:0;padding-top:8px;}
-        .rua-lbl-main{font-size:15px;font-weight:800;color:#1e293b;}
-        .rua-lbl-sub{font-size:11px;font-weight:700;margin-top:3px;}
-        .andares{display:flex;flex-direction:column-reverse;gap:4px;}
-        .andar-row{display:flex;gap:2px;align-items:center;}
-        .a-lbl{width:28px;font-size:12px;font-weight:700;color:#94a3b8;text-align:right;flex-shrink:0;margin-right:2px;}
-        .vao-group{display:flex;gap:1px;margin-right:4px;}
-        .cell{border-radius:4px;cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;transition:all .15s;border:2px solid;flex-shrink:0;gap:2px;position:relative;}
-        .cell:hover{transform:scale(1.12);box-shadow:0 4px 14px #0003;z-index:5;}
-        .cell-acesso{border:2px dashed #e2e8f0!important;background:#f8fafc!important;cursor:default;}
-        .cell-dot{border-radius:50%;}
-        .cell-sku{font-size:8px;font-weight:800;color:#374151;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:0 2px;text-align:center;}
-        .cell-plus{font-size:16px;color:#cbd5e1;font-weight:300;line-height:1;}
-        .lado-tag{position:absolute;top:1px;left:2px;font-size:7px;font-weight:800;color:#94a3b8;}
-        .vao-lbl-row{display:flex;gap:4px;padding-left:32px;margin-top:5px;}
-        .vao-lbl{font-size:9px;font-weight:600;color:#cbd5e1;text-align:center;flex-shrink:0;}
-        .overlay{position:fixed;inset:0;background:#0006;display:flex;align-items:center;justify-content:center;z-index:200;}
-        .modal{background:#fff;border-radius:12px;width:520px;max-width:95vw;max-height:92vh;overflow-y:auto;box-shadow:0 24px 64px #0005;}
-        .modal-hdr{background:#1e3a5f;color:#fff;padding:22px 28px;border-radius:12px 12px 0 0;}
-        .modal-hdr-id{font-size:20px;font-weight:800;}
-        .modal-hdr-sub{font-size:13px;color:#93c5fd;margin-top:4px;}
-        .modal-body{padding:24px 28px;}
-        .alerta{background:#fef2f2;border:2px solid #fca5a5;border-radius:8px;padding:12px 16px;font-size:13px;color:#dc2626;font-weight:700;margin-bottom:16px;}
-        .field{margin-bottom:16px;}
-        .field label{display:block;font-size:12px;font-weight:700;color:#374151;text-transform:uppercase;letter-spacing:.8px;margin-bottom:6px;}
-        .field input,.field select{width:100%;background:#f8fafc;border:2px solid #e2e8f0;border-radius:8px;padding:12px 14px;color:#1e293b;font-family:inherit;font-size:15px;outline:none;transition:border-color .2s;}
-        .field input:focus,.field select:focus{border-color:#1d4ed8;background:#fff;}
-        .frow{display:grid;grid-template-columns:1fr 1fr;gap:14px;}
-        .vt-box{background:#f0fdf4;border:2px solid #86efac;border-radius:8px;padding:12px 16px;font-size:14px;color:#15803d;font-weight:700;margin-bottom:14px;}
-        .modal-foot{padding:18px 28px;border-top:2px solid #f1f5f9;display:flex;gap:10px;justify-content:flex-end;background:#f8fafc;border-radius:0 0 12px 12px;}
-        .btn{padding:11px 24px;font-family:inherit;font-size:14px;font-weight:700;border:none;border-radius:8px;cursor:pointer;transition:all .15s;}
-        .btn-primary{background:#1e3a5f;color:#fff;} .btn-primary:hover{background:#1d4ed8;}
-        .btn-danger{background:#fef2f2;color:#dc2626;border:2px solid #fca5a5;} .btn-danger:hover{background:#fee2e2;}
-        .btn-ghost{background:#f1f5f9;color:#475569;border:2px solid #e2e8f0;} .btn-ghost:hover{background:#e2e8f0;}
-        .filters{display:flex;gap:10px;margin-bottom:18px;flex-wrap:wrap;align-items:center;}
-        .filters input,.filters select{background:#fff;border:2px solid #e2e8f0;border-radius:8px;padding:10px 14px;color:#1e293b;font-family:inherit;font-size:14px;outline:none;}
-        .filters input:focus,.filters select:focus{border-color:#1d4ed8;}
-        .tbl-wrap{background:#fff;border:1.5px solid #e2e8f0;border-radius:10px;overflow:hidden;}
-        table{width:100%;border-collapse:collapse;font-size:14px;}
-        th{background:#f1f5f9;color:#374151;text-transform:uppercase;letter-spacing:.8px;font-size:11px;font-weight:700;padding:12px 14px;text-align:left;border-bottom:2px solid #e2e8f0;white-space:nowrap;}
-        td{padding:11px 14px;border-bottom:1px solid #f1f5f9;color:#334155;}
-        tr:hover td{background:#f8fafc;} tr:last-child td{border-bottom:none;}
-        .badge{display:inline-block;padding:3px 10px;border-radius:20px;font-size:12px;font-weight:700;}
-        .badge-A{background:#fef2f2;color:#dc2626;} .badge-B{background:#fffbeb;color:#b45309;} .badge-C{background:#f0fdf4;color:#15803d;}
-        .badge-sf{background:#eff6ff;color:#1d4ed8;} .badge-mn{background:#fffbeb;color:#b45309;}
-        .fin-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px;margin-bottom:24px;}
-        .fin-card{background:#fff;border:1.5px solid #e2e8f0;border-radius:10px;padding:20px;}
-        .fin-card-title{font-size:12px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.8px;margin-bottom:8px;}
-        .fin-card-value{font-size:26px;font-weight:800;}
-        .fin-card-sub{font-size:12px;color:#94a3b8;margin-top:5px;}
-        .prog-bar{height:7px;background:#e2e8f0;border-radius:4px;margin-top:12px;overflow:hidden;}
-        .prog-fill{height:100%;border-radius:4px;transition:width .6s;}
-        .toast{position:fixed;bottom:28px;right:28px;background:#1e3a5f;color:#fff;padding:14px 24px;border-radius:8px;font-size:14px;font-weight:700;box-shadow:0 8px 28px #0003;z-index:300;animation:slideUp .3s ease;}
-        .toast.warn{background:#b45309;}
-        @keyframes slideUp{from{transform:translateY(16px);opacity:0;}to{transform:translateY(0);opacity:1;}}
-        .empty-state{text-align:center;padding:70px 40px;color:#94a3b8;font-size:15px;line-height:1.8;}
-        .empty-state .icon{font-size:40px;margin-bottom:14px;}
-      `}</style>
+      <style>{CSS}</style>
 
       <div className="hdr">
-        <div>
-          <div className="hdr-logo">▦ WMS — Several Importados</div>
-          <div className="hdr-sub">Gestão de Armazém · Mianofix & Iscali</div>
-        </div>
+        <div><div className="hdr-logo">WMS - Several Importados</div><div className="hdr-sub">Gestao de Armazem - Mianofix e Iscali</div></div>
         <div className="hdr-right">
           <div className="cloud-badge" style={{color:cloudInfo.color}}>{cloudInfo.label}</div>
           <nav className="nav">
-            {[["mapa","🗺 Mapa"],["inventario","📦 Inventário"],["financeiro","💰 Financeiro"]].map(([v,l])=>(
+            {[["mapa","Mapa"],["inventario","Inventario"],["financeiro","Financeiro"]].map(([v,l])=>(
               <button key={v} className={`nb${view===v?" on":""}`} onClick={()=>setView(v)}>{l}</button>
             ))}
           </nav>
@@ -231,8 +272,8 @@ export default function App() {
       </div>
 
       <div className="toolbar">
-        <span>☁ Firebase Google Cloud · cada vão tem Lado A e Lado B</span>
-        <button className="tbtn tbtn-csv" onClick={exportCSV} style={{marginLeft:"auto"}}>📊 Exportar Excel (.csv)</button>
+        <span>Firebase Google Cloud - P10: A1 e A2 = empilhadeira - A3 e A4 = normais</span>
+        <button className="tbtn tbtn-csv" onClick={exportCSV} style={{marginLeft:"auto"}}>Exportar Excel (.csv)</button>
       </div>
 
       <div className="kbar">
@@ -246,21 +287,23 @@ export default function App() {
 
       <div className="main">
         {view==="mapa"&&<>
-          <div className="sec-title">Layout do Armazém — cada vão tem Lado A e Lado B</div>
+          <div className="sec-title">Layout do Armazem</div>
           <div className="legend">
-            <div className="li"><div className="ld" style={{background:"#eff6ff",borderColor:"#93c5fd"}}></div>Seu Full — vazio</div>
-            <div className="li"><div className="ld" style={{background:"#fffbeb",borderColor:"#fcd34d"}}></div>Mianofix — vazio</div>
+            <div className="li"><div className="ld" style={{background:"#eff6ff",borderColor:"#93c5fd"}}></div>Seu Full vazio</div>
+            <div className="li"><div className="ld" style={{background:"#fffbeb",borderColor:"#fcd34d"}}></div>Mianofix vazio</div>
             <div className="li"><div className="ld" style={{background:"#fef2f2",borderColor:"#fca5a5"}}></div>Curva A</div>
             <div className="li"><div className="ld" style={{background:"#fffbeb",borderColor:"#fcd34d"}}></div>Curva B</div>
             <div className="li"><div className="ld" style={{background:"#f0fdf4",borderColor:"#86efac"}}></div>Curva C</div>
-            <div style={{marginLeft:"auto",background:"#fefce8",border:"1.5px solid #fde047",borderRadius:"6px",padding:"6px 14px",fontSize:"12px",color:"#854d0e",fontWeight:700}}>⚠ Andares 3 e 4 → só Curva B ou C</div>
+            <div style={{marginLeft:"auto",background:"#fefce8",border:"1.5px solid #fde047",borderRadius:"6px",padding:"6px 14px",fontSize:"12px",color:"#854d0e",fontWeight:700}}>Andares 3 e 4 so Curva B ou C</div>
           </div>
           <div className="wh">
             {WAREHOUSE.ruas.map((rua,ri)=>{
-              const CW=28, CH=42;
-              const isLastAcesso = rua.vaos===10;
+              const CW=28,CH=42;
               return(<div key={rua.id}>
-                {(ri===2||ri===4)&&<div className="corredor">— CORREDOR —</div>}
+                {ri===1&&<div className="corredor">CORREDOR</div>}
+                {ri===2&&<div className="costas">costas com costas - Ruas 2 e 3</div>}
+                {ri===3&&<div className="corredor">CORREDOR</div>}
+                {ri===4&&<div className="costas">costas com costas - Ruas 4 e 5</div>}
                 <div className="rua-block">
                   <div className="rua-lbl">
                     <div className="rua-lbl-main">{rua.label}</div>
@@ -273,14 +316,15 @@ export default function App() {
                           <div className="a-lbl">A{andar}</div>
                           {Array.from({length:rua.vaos},(_,vi)=>{
                             const vao=vi+1;
-                            const isAcesso=isLastAcesso&&vao===rua.vaos;
-                            if(isAcesso) return(
-                              <div key={vao} className="vao-group">
-                                <div className="cell cell-acesso" style={{width:CW*2+1,height:CH}}>
-                                  <span style={{fontSize:"8px",color:"#94a3b8",fontWeight:700}}>ACESSO</span>
+                            if(isAcesso(rua.vaos,vao,andar)){
+                              return(
+                                <div key={vao} className="vao-group">
+                                  <div className="cell cell-acesso" style={{width:CW*2+1,height:CH}}>
+                                    <span style={{fontSize:"7px",color:"#94a3b8",fontWeight:700}}>EMP.</span>
+                                  </div>
                                 </div>
-                              </div>
-                            );
+                              );
+                            }
                             return(
                               <div key={vao} className="vao-group">
                                 {LADOS.map(lado=>{
@@ -291,7 +335,7 @@ export default function App() {
                                   else{const cv=c.curva||"X";const bgs={A:"#fef2f2",B:"#fffbeb",C:"#f0fdf4",X:"#f8fafc"};const bcs={A:"#fca5a5",B:"#fcd34d",C:"#86efac",X:"#e2e8f0"};bg=bgs[cv];bc=bcs[cv];}
                                   return(
                                     <div key={lado} className="cell" style={{width:CW,height:CH,background:bg,borderColor:bc}}
-                                      title={has?`${c.sku} · ${c.nome}`:id+" — vazio"}
+                                      title={has?`${c.sku} - ${c.nome}`:id+" vazio"}
                                       onClick={()=>openCell(id)}>
                                       <span className="lado-tag">{lado}</span>
                                       {has?<><div className="cell-dot" style={{width:7,height:7,background:CURVA_COLORS[c.curva||""]}}></div><div className="cell-sku" style={{width:CW-6}}>{c.sku}</div></>:<span className="cell-plus">+</span>}
@@ -313,54 +357,88 @@ export default function App() {
                 </div>
               </div>);
             })}
-            <div style={{display:"flex",gap:"14px",marginTop:"22px",flexWrap:"wrap"}}>
-              <div style={{flex:1,minWidth:180,background:"#eff6ff",border:"2px solid #93c5fd",borderRadius:"8px",padding:"14px 18px"}}>
-                <div style={{fontWeight:800,color:"#1d4ed8",fontSize:"14px",marginBottom:4}}>📦 Estoque Flex</div>
-                <div style={{fontSize:"13px",color:"#3b82f6"}}>Posições não fixas. Identificadas por etiqueta no palete com nome da loja.</div>
+
+            <div className="areas-row">
+              <div className="area-box flex">
+                <div className="area-box-title">Estoque Flex (posicoes nao fixas)</div>
+                <div className="slots-wrap">
+                  {flexSlots.map(slot=>{
+                    const c=cells[slot],has=c&&(c.descricao||c.sku);
+                    return(
+                      <div key={slot} className={`slot ${has?"filled":"empty-flex"}`} onClick={()=>openArea(slot,"flex")}
+                        title={has?`${c.descricao||c.loja}`:slot+" vazio"}>
+                        <div className="slot-id">{slot}</div>
+                        {has?<><div className="slot-dot"></div><div className="slot-desc">{c.loja||c.descricao}</div></>:<span style={{fontSize:"16px",color:"#93c5fd"}}>+</span>}
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
-              <div style={{flex:1,minWidth:180,background:"#f0fdf4",border:"2px solid #86efac",borderRadius:"8px",padding:"14px 18px"}}>
-                <div style={{fontWeight:800,color:"#15803d",fontSize:"14px",marginBottom:4}}>✅ Full Pronto</div>
-                <div style={{fontSize:"13px",color:"#16a34a"}}>Mercadorias processadas aguardando despacho.</div>
+              <div className="area-box full">
+                <div className="area-box-title">Full Pronto (aguardando despacho)</div>
+                <div className="slots-wrap">
+                  {fullSlots.map(slot=>{
+                    const c=cells[slot],has=c&&(c.descricao||c.sku);
+                    return(
+                      <div key={slot} className={`slot ${has?"filled":"empty-full"}`} onClick={()=>openArea(slot,"full")}
+                        title={has?`${c.descricao||c.loja}`:slot+" vazio"}>
+                        <div className="slot-id">{slot}</div>
+                        {has?<><div className="slot-dot"></div><div className="slot-desc">{c.loja||c.descricao}</div></>:<span style={{fontSize:"16px",color:"#86efac"}}>+</span>}
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
             </div>
           </div>
         </>}
 
         {view==="inventario"&&<>
-          <div className="sec-title">Inventário Completo</div>
+          <div className="sec-title">Inventario Completo</div>
           <div className="filters">
-            <input placeholder="🔍 Buscar por SKU ou nome..." value={search} onChange={e=>setSearch(e.target.value)} style={{width:260}}/>
+            <input placeholder="Buscar SKU ou nome..." value={search} onChange={e=>setSearch(e.target.value)} style={{width:260}}/>
             <select value={fTipo} onChange={e=>setFTipo(e.target.value)}>
-              <option value="todos">Todas as áreas</option>
-              <option value="seufull">Seu Full (Ruas 1–2)</option>
-              <option value="mianofix">Mianofix (Ruas 3–5)</option>
+              <option value="todos">Todas as areas</option>
+              <option value="seufull">Seu Full (Ruas 1-2)</option>
+              <option value="mianofix">Mianofix (Ruas 3-5)</option>
+              <option value="flex">Estoque Flex</option>
+              <option value="full">Full Pronto</option>
             </select>
             <select value={fCurva} onChange={e=>setFCurva(e.target.value)}>
               <option value="todos">Todas as curvas</option>
               <option value="A">Curva A</option><option value="B">Curva B</option><option value="C">Curva C</option>
             </select>
-            <button className="btn btn-primary" onClick={exportCSV} style={{marginLeft:"auto"}}>⬇ Exportar CSV</button>
+            <button className="btn btn-primary" onClick={exportCSV} style={{marginLeft:"auto"}}>Exportar CSV</button>
           </div>
           {filtered.length===0
-            ?<div className="empty-state"><div className="icon">📭</div>Nenhum item encontrado.<br/>Vá ao Mapa e clique em uma posição para alocar produtos.</div>
+            ?<div className="empty-state"><div className="icon">📭</div>Nenhum item encontrado.</div>
             :<div className="tbl-wrap"><table>
-              <thead><tr><th>Posição</th><th>Área</th><th>Vão</th><th>Lado</th><th>Andar</th><th>SKU</th><th>Nome</th><th style={{textAlign:"right"}}>Qtd</th><th style={{textAlign:"right"}}>Vlr Unit</th><th style={{textAlign:"right"}}>Vlr Total</th><th>Curva</th><th>Loja</th></tr></thead>
-              <tbody>{filtered.map(r=>(
-                <tr key={r.id} style={{cursor:"pointer"}} onClick={()=>openCell(r.id)}>
-                  <td style={{fontWeight:800,color:"#1e3a5f"}}>{r.id}</td>
-                  <td><span className={`badge badge-${r.tipo==="seufull"?"sf":"mn"}`}>{r.tipo==="seufull"?"SEU FULL":"MIANOFIX"}</span></td>
-                  <td style={{fontWeight:600}}>P{r.vao}</td>
-                  <td><span style={{fontWeight:800,color:r.lado==="A"?"#1d4ed8":"#b45309"}}>Lado {r.lado}</span></td>
-                  <td>A{r.andar}</td>
-                  <td style={{fontWeight:700}}>{r.sku}</td>
-                  <td style={{maxWidth:160,overflow:"hidden",textOverflow:"ellipsis"}}>{r.nome}</td>
-                  <td style={{textAlign:"right",fontWeight:700}}>{parseFloat(r.qtd||0).toLocaleString("pt-BR")}</td>
-                  <td style={{textAlign:"right"}}>R$ {parseFloat(r.valorUnit||0).toLocaleString("pt-BR",{minimumFractionDigits:2})}</td>
-                  <td style={{textAlign:"right",fontWeight:800,color:"#15803d"}}>R$ {((parseFloat(r.qtd)||0)*(parseFloat(r.valorUnit)||0)).toLocaleString("pt-BR",{minimumFractionDigits:2})}</td>
-                  <td>{r.curva&&<span className={`badge badge-${r.curva}`}>{r.curva}</span>}</td>
-                  <td style={{color:"#64748b"}}>{r.loja}</td>
-                </tr>
-              ))}</tbody>
+              <thead><tr>
+                <th>Posicao</th><th>Area</th><th>SKU / Descricao</th><th>Nome / Loja</th>
+                <th style={{textAlign:"right"}}>Qtd</th><th style={{textAlign:"right"}}>Vlr Unit</th>
+                <th style={{textAlign:"right"}}>Vlr Total</th><th>Curva</th><th>Obs</th>
+              </tr></thead>
+              <tbody>{filtered.map(r=>{
+                const isArea=r.tipo==="flex"||r.tipo==="full";
+                return(
+                  <tr key={r.id} style={{cursor:"pointer"}} onClick={()=>isArea?openArea(r.id,r.tipo):openCell(r.id)}>
+                    <td style={{fontWeight:800,color:"#1e3a5f"}}>{r.id}</td>
+                    <td>
+                      {r.tipo==="seufull"&&<span className="badge badge-sf">SEU FULL</span>}
+                      {r.tipo==="mianofix"&&<span className="badge badge-mn">MIANOFIX</span>}
+                      {r.tipo==="flex"&&<span className="badge badge-fx">FLEX</span>}
+                      {r.tipo==="full"&&<span className="badge badge-fl">FULL PRONTO</span>}
+                    </td>
+                    <td style={{fontWeight:700}}>{r.sku||r.descricao||"-"}</td>
+                    <td style={{maxWidth:160,overflow:"hidden",textOverflow:"ellipsis"}}>{r.nome||r.loja||"-"}</td>
+                    <td style={{textAlign:"right",fontWeight:700}}>{parseFloat(r.qtd||0).toLocaleString("pt-BR")}</td>
+                    <td style={{textAlign:"right"}}>R$ {parseFloat(r.valorUnit||0).toLocaleString("pt-BR",{minimumFractionDigits:2})}</td>
+                    <td style={{textAlign:"right",fontWeight:800,color:"#15803d"}}>R$ {((parseFloat(r.qtd)||0)*(parseFloat(r.valorUnit)||0)).toLocaleString("pt-BR",{minimumFractionDigits:2})}</td>
+                    <td>{r.curva&&<span className={`badge badge-${r.curva}`}>{r.curva}</span>}</td>
+                    <td style={{color:"#94a3b8",maxWidth:120,overflow:"hidden",textOverflow:"ellipsis"}}>{r.obs||"-"}</td>
+                  </tr>
+                );
+              })}</tbody>
             </table></div>
           }
         </>}
@@ -370,63 +448,83 @@ export default function App() {
           <div className="fin-grid">
             <div className="fin-card"><div className="fin-card-title">Valor Total em Estoque</div><div className="fin-card-value" style={{color:"#15803d"}}>R$ {totais.vt.toLocaleString("pt-BR",{minimumFractionDigits:2})}</div></div>
             <div className="fin-card"><div className="fin-card-title">Total de Itens</div><div className="fin-card-value" style={{color:"#1d4ed8"}}>{totais.ti.toLocaleString("pt-BR")}</div></div>
-            <div className="fin-card"><div className="fin-card-title">SKUs Alocados</div><div className="fin-card-value">{totais.skus}</div></div>
+            <div className="fin-card"><div className="fin-card-title">SKUs / Posicoes</div><div className="fin-card-value">{totais.skus}</div></div>
           </div>
-          <div className="sec-title">Distribuição por Curva ABC</div>
+          <div className="sec-title">Curva ABC</div>
           <div className="fin-grid">
             {["A","B","C"].map(c=>{
               const itens=allCells.filter(r=>r.curva===c);
               const valor=itens.reduce((s,r)=>(parseFloat(r.qtd)||0)*(parseFloat(r.valorUnit)||0)+s,0);
               const pct=totais.vt>0?(valor/totais.vt*100).toFixed(1):0;
               const clr={A:"#dc2626",B:"#d97706",C:"#16a34a"}[c];
-              const sub={A:"Alto giro · Andares 1 e 2",B:"Médio giro",C:"Baixo giro · Andares 3 e 4"}[c];
-              return <div key={c} className="fin-card"><div className="fin-card-title">Curva {c} — {itens.length} posições</div><div className="fin-card-value" style={{color:clr}}>R$ {valor.toLocaleString("pt-BR",{minimumFractionDigits:2})}</div><div className="fin-card-sub">{pct}% do valor total · {sub}</div><div className="prog-bar"><div className="prog-fill" style={{width:`${pct}%`,background:clr}}></div></div></div>;
+              const sub={A:"Alto giro - Andares 1 e 2",B:"Medio giro",C:"Baixo giro - Andares 3 e 4"}[c];
+              return <div key={c} className="fin-card"><div className="fin-card-title">Curva {c} - {itens.length} posicoes</div><div className="fin-card-value" style={{color:clr}}>R$ {valor.toLocaleString("pt-BR",{minimumFractionDigits:2})}</div><div className="fin-card-sub">{pct}% do valor - {sub}</div><div className="prog-bar"><div className="prog-fill" style={{width:`${pct}%`,background:clr}}></div></div></div>;
             })}
           </div>
-          <div className="sec-title">Distribuição por Área</div>
+          <div className="sec-title">Por Area</div>
           <div className="fin-grid">
-            {["seufull","mianofix"].map(tipo=>{
+            {[["seufull","Seu Full - Ruas 1-2","#1d4ed8"],["mianofix","Mianofix - Ruas 3-5","#b45309"],["flex","Estoque Flex","#1d4ed8"],["full","Full Pronto","#15803d"]].map(([tipo,label,clr])=>{
               const itens=allCells.filter(r=>r.tipo===tipo);
               const valor=itens.reduce((s,r)=>(parseFloat(r.qtd)||0)*(parseFloat(r.valorUnit)||0)+s,0);
               const pct=totais.vt>0?(valor/totais.vt*100).toFixed(1):0;
-              const clr=tipo==="seufull"?"#1d4ed8":"#b45309";
-              return <div key={tipo} className="fin-card"><div className="fin-card-title">{tipo==="seufull"?"Clientes Seu Full · Ruas 1–2":"Mianofix / Iscali · Ruas 3–5"}</div><div className="fin-card-value" style={{color:clr}}>{itens.length} posições</div><div className="fin-card-sub">R$ {valor.toLocaleString("pt-BR",{minimumFractionDigits:2})} · {pct}% do total</div><div className="prog-bar"><div className="prog-fill" style={{width:`${pct}%`,background:clr}}></div></div></div>;
+              return <div key={tipo} className="fin-card"><div className="fin-card-title">{label}</div><div className="fin-card-value" style={{color:clr}}>{itens.length} itens</div><div className="fin-card-sub">R$ {valor.toLocaleString("pt-BR",{minimumFractionDigits:2})} - {pct}% do total</div><div className="prog-bar"><div className="prog-fill" style={{width:`${pct}%`,background:clr}}></div></div></div>;
             })}
           </div>
           <div style={{background:"#fefce8",border:"2px solid #fde047",borderRadius:"10px",padding:"18px 22px",fontSize:"14px",color:"#854d0e",lineHeight:1.8,fontWeight:600}}>
-            <strong style={{fontSize:"15px"}}>⚠ Regra de Ouro do Armazém:</strong><br/>
-            Produtos Curva A nunca nos Andares 3 ou 4. O que sai todo dia fica na altura das mãos — Andares 1 e 2, próximo ao corredor.
+            Regra de Ouro: Curva A nunca nos Andares 3 ou 4. O que sai todo dia fica nos Andares 1 e 2, proximo ao corredor.
           </div>
         </>}
       </div>
 
       {sel&&<div className="overlay" onClick={e=>{if(e.target===e.currentTarget)setSel(null)}}>
         <div className="modal">
-          <div className="modal-hdr">
-            <div className="modal-hdr-id">📍 {sel}</div>
-            <div className="modal-hdr-sub">
-              {selRuaObj?.tipo==="seufull"?"Área Seu Full":"Área Mianofix / Iscali"} · Lado {selLado} · Andar {selAndar}
-            </div>
+          <div className="modal-hdr palet">
+            <div className="modal-hdr-id">{sel}</div>
+            <div className="modal-hdr-sub">{selRuaObj?.tipo==="seufull"?"Area Seu Full":"Area Mianofix / Iscali"} - Lado {selLado} - Andar {selAndar}</div>
           </div>
           <div className="modal-body">
-            {alertaAlto&&<div className="alerta">⚠ ANDAR {selAndar} — Não alocar Curva A. Use apenas Curva B ou C.</div>}
+            {alertaAlto&&<div className="alerta">ANDAR {selAndar} - Nao alocar Curva A. Use Curva B ou C.</div>}
             <div className="frow">
-              <div className="field"><label>SKU / Código</label><input value={form.sku} onChange={e=>setForm(f=>({...f,sku:e.target.value}))} placeholder="EX-001"/></div>
-              <div className="field"><label>Curva ABC</label><select value={form.curva} onChange={e=>setForm(f=>({...f,curva:e.target.value}))}><option value="">Selecionar...</option><option value="A">A — Alto giro</option><option value="B">B — Médio giro</option><option value="C">C — Baixo giro</option></select></div>
+              <div className="field"><label>SKU / Codigo</label><input value={form.sku} onChange={e=>setForm(f=>({...f,sku:e.target.value}))} placeholder="EX-001"/></div>
+              <div className="field"><label>Curva ABC</label><select value={form.curva} onChange={e=>setForm(f=>({...f,curva:e.target.value}))}><option value="">Selecionar...</option><option value="A">A - Alto giro</option><option value="B">B - Medio giro</option><option value="C">C - Baixo giro</option></select></div>
             </div>
-            <div className="field"><label>Nome do Produto</label><input value={form.nome} onChange={e=>setForm(f=>({...f,nome:e.target.value}))} placeholder="Descrição completa do produto"/></div>
+            <div className="field"><label>Nome do Produto</label><input value={form.nome} onChange={e=>setForm(f=>({...f,nome:e.target.value}))} placeholder="Descricao do produto"/></div>
             <div className="frow">
               <div className="field"><label>Quantidade</label><input type="number" value={form.qtd} onChange={e=>setForm(f=>({...f,qtd:e.target.value}))} placeholder="0"/></div>
-              <div className="field"><label>Valor Unitário (R$)</label><input type="number" value={form.valorUnit} onChange={e=>setForm(f=>({...f,valorUnit:e.target.value}))} placeholder="0,00"/></div>
+              <div className="field"><label>Valor Unitario (R$)</label><input type="number" value={form.valorUnit} onChange={e=>setForm(f=>({...f,valorUnit:e.target.value}))} placeholder="0,00"/></div>
             </div>
-            {selRuaObj?.tipo==="seufull"&&<div className="field"><label>Loja de Origem (Seu Full)</label><input value={form.loja} onChange={e=>setForm(f=>({...f,loja:e.target.value}))} placeholder="Nome da loja cliente"/></div>}
-            <div className="field"><label>Observação</label><input value={form.obs} onChange={e=>setForm(f=>({...f,obs:e.target.value}))} placeholder="Notas adicionais..."/></div>
-            {form.qtd&&form.valorUnit&&<div className="vt-box">💰 Valor total desta posição: R$ {((parseFloat(form.qtd)||0)*(parseFloat(form.valorUnit)||0)).toLocaleString("pt-BR",{minimumFractionDigits:2})}</div>}
+            {selRuaObj?.tipo==="seufull"&&<div className="field"><label>Loja de Origem</label><input value={form.loja} onChange={e=>setForm(f=>({...f,loja:e.target.value}))} placeholder="Nome da loja cliente"/></div>}
+            <div className="field"><label>Observacao</label><input value={form.obs} onChange={e=>setForm(f=>({...f,obs:e.target.value}))} placeholder="Notas..."/></div>
+            {form.qtd&&form.valorUnit&&<div className="vt-box">Valor total desta posicao: R$ {((parseFloat(form.qtd)||0)*(parseFloat(form.valorUnit)||0)).toLocaleString("pt-BR",{minimumFractionDigits:2})}</div>}
           </div>
           <div className="modal-foot">
-            <button className="btn btn-danger" onClick={clearCell}>🗑 Limpar</button>
+            <button className="btn btn-danger" onClick={clearCell}>Limpar</button>
             <button className="btn btn-ghost" onClick={()=>setSel(null)}>Cancelar</button>
-            <button className="btn btn-primary" onClick={saveCell}>✓ Salvar na Nuvem</button>
+            <button className="btn btn-primary" onClick={saveCell}>Salvar na Nuvem</button>
+          </div>
+        </div>
+      </div>}
+
+      {areaModal&&<div className="overlay" onClick={e=>{if(e.target===e.currentTarget)setAreaModal(null)}}>
+        <div className="modal">
+          <div className={`modal-hdr ${areaModal.tipo}`}>
+            <div className="modal-hdr-id">{areaModal.slot}</div>
+            <div className="modal-hdr-sub">{areaModal.tipo==="flex"?"Estoque Flex - posicao nao fixa":"Full Pronto - aguardando despacho"}</div>
+          </div>
+          <div className="modal-body">
+            <div className="field"><label>Descricao / Conteudo</label><input value={areaForm.descricao} onChange={e=>setAreaForm(f=>({...f,descricao:e.target.value}))} placeholder="O que esta neste espaco..."/></div>
+            <div className="field"><label>Loja / Cliente</label><input value={areaForm.loja} onChange={e=>setAreaForm(f=>({...f,loja:e.target.value}))} placeholder="Nome da loja ou cliente"/></div>
+            <div className="frow">
+              <div className="field"><label>Quantidade</label><input type="number" value={areaForm.qtd} onChange={e=>setAreaForm(f=>({...f,qtd:e.target.value}))} placeholder="0"/></div>
+              <div className="field"><label>Valor Unitario (R$)</label><input type="number" value={areaForm.valorUnit} onChange={e=>setAreaForm(f=>({...f,valorUnit:e.target.value}))} placeholder="0,00"/></div>
+            </div>
+            <div className="field"><label>Observacao</label><input value={areaForm.obs} onChange={e=>setAreaForm(f=>({...f,obs:e.target.value}))} placeholder="Notas, numero de pedido, data..."/></div>
+            {areaForm.qtd&&areaForm.valorUnit&&<div className="vt-box">Valor total: R$ {((parseFloat(areaForm.qtd)||0)*(parseFloat(areaForm.valorUnit)||0)).toLocaleString("pt-BR",{minimumFractionDigits:2})}</div>}
+          </div>
+          <div className="modal-foot">
+            <button className="btn btn-danger" onClick={clearArea}>Limpar</button>
+            <button className="btn btn-ghost" onClick={()=>setAreaModal(null)}>Cancelar</button>
+            <button className={`btn ${areaModal.tipo==="full"?"btn-success":"btn-primary"}`} onClick={saveArea}>Salvar na Nuvem</button>
           </div>
         </div>
       </div>}
