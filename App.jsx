@@ -7,9 +7,9 @@ const WAREHOUSE = {
   ruas: [
     { id: "R1", label: "RUA 1", vaos: 4,  andares: 4, tipo: "seufull",  inverter: false },
     { id: "R2", label: "RUA 2", vaos: 10, andares: 4, tipo: "seufull",  inverter: false },
-    { id: "R3", label: "RUA 3", vaos: 10, andares: 4, tipo: "mianofix", inverter: true  },
+    { id: "R3", label: "RUA 3", vaos: 10, andares: 4, tipo: "mianofix", inverter: false },
     { id: "R4", label: "RUA 4", vaos: 10, andares: 4, tipo: "mianofix", inverter: false },
-    { id: "R5", label: "RUA 5", vaos: 10, andares: 4, tipo: "mianofix", inverter: true  },
+    { id: "R5", label: "RUA 5", vaos: 10, andares: 4, tipo: "mianofix", inverter: false },
   ],
 };
 
@@ -293,9 +293,7 @@ export default function App() {
           <div className="wh">
             {WAREHOUSE.ruas.map((rua,ri)=>{
               const CW=28, CH=42;
-              // inverter=true: A1 aparece no TOPO (flex-direction: column, ordem 1,2,3,4 de cima pra baixo)
-              // inverter=false: A4 aparece no TOPO (flex-direction: column-reverse, ordem 1,2,3,4 de baixo pra cima)
-              const andaresList = rua.inverter ? [1,2,3,4] : [4,3,2,1];
+              const andaresList = (rua.id==="R1"||rua.id==="R3"||rua.id==="R5") ? [4,3,2,1] : [1,2,3,4];
               return (
                 <div key={rua.id}>
                   {ri===1 && <div className="corredor">CORREDOR</div>}
@@ -308,7 +306,7 @@ export default function App() {
                       <div className="rua-lbl-sub" style={{color:rua.tipo==="seufull"?"#1d4ed8":"#b45309"}}>{rua.tipo==="seufull"?"SEU FULL":"MIANOFIX"}</div>
                     </div>
                     <div>
-                      <div className="andares" style={{flexDirection: rua.inverter ? "column" : "column-reverse"}}>
+                      <div className="andares" style={{flexDirection:"column"}}>
                         {andaresList.map(andar=>(
                           <div key={andar} className="andar-row">
                             <div className="a-lbl">A{andar}</div>
@@ -357,31 +355,11 @@ export default function App() {
               );
             })}
 
-            {/* FULL PRONTO + FLEX lado a lado */}
-            <div className="areas-row">
-              {/* FULL PRONTO - 40 paletes */}
-              <div className="full-box">
-                <div className="full-title">Full Pronto</div>
-                <div className="full-sub">40 paletes - aguardando despacho</div>
-                <div className="full-grid">
-                  {fullSlots.map(slot=>{
-                    const c=cells[slot], has=c&&(c.descricao||c.loja);
-                    return(
-                      <div key={slot} className={`palet ${has?"filled":"empty"}`}
-                        onClick={()=>openArea(slot,"full")}
-                        title={has?`${c.loja||""} - ${c.descricao||""}`:slot}>
-                        <span className="palet-num">{slot.replace("FULL-","")}</span>
-                        {has
-                          ?<><div className="palet-dot"></div><div className="palet-loja">{c.loja||"-"}</div><div className="palet-desc">{c.descricao||""}</div></>
-                          :<span style={{fontSize:"18px",color:"#86efac"}}>+</span>
-                        }
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
+            <div className="corredor" style={{marginTop:16}}>CORREDOR — ÁREA DE RECEBIMENTO E DESPACHO</div>
 
-              {/* ESTOQUE FLEX - 60 gavetas compactas */}
+            {/* FLEX esquerda, FULL direita */}
+            <div className="areas-row" style={{gridTemplateColumns:"2fr 3fr"}}>
+              {/* ESTOQUE FLEX - esquerda */}
               <div className="flex-box">
                 <div className="flex-title">Estoque Flex</div>
                 <div className="flex-sub">60 gavetas - estoque picado</div>
@@ -396,6 +374,28 @@ export default function App() {
                         {has
                           ?<><div className="gav-dot"></div><div className="gav-desc">{c.descricao||c.loja}</div></>
                           :<span style={{fontSize:"12px",color:"#93c5fd"}}>+</span>
+                        }
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* FULL PRONTO - direita */}
+              <div className="full-box">
+                <div className="full-title">Full Pronto</div>
+                <div className="full-sub">40 paletes - aguardando despacho</div>
+                <div className="full-grid">
+                  {fullSlots.map(slot=>{
+                    const c=cells[slot], has=c&&(c.descricao||c.loja);
+                    return(
+                      <div key={slot} className={`palet ${has?"filled":"empty"}`}
+                        onClick={()=>openArea(slot,"full")}
+                        title={has?`${c.loja||""} - ${c.descricao||""}`:slot}>
+                        <span className="palet-num">{slot.replace("FULL-","")}</span>
+                        {has
+                          ?<><div className="palet-dot"></div><div className="palet-loja">{c.loja||"-"}</div><div className="palet-desc">{c.descricao||""}</div></>
+                          :<span style={{fontSize:"18px",color:"#86efac"}}>+</span>
                         }
                       </div>
                     );
@@ -545,4 +545,3 @@ export default function App() {
     </div>
   );
 }
-
