@@ -1,6 +1,8 @@
 import { useState, useMemo, useEffect, useCallback } from "react";
 
 const CURVA_COLORS = { A: "#dc2626", B: "#d97706", C: "#16a34a", "": "#94a3b8" };
+
+// inverter: true = A1 aparece em cima (lado do corredor acima), A4 embaixo
 const WAREHOUSE = {
   ruas: [
     { id: "R1", label: "RUA 1", vaos: 4,  andares: 4, tipo: "seufull",  inverter: false },
@@ -10,6 +12,7 @@ const WAREHOUSE = {
     { id: "R5", label: "RUA 5", vaos: 10, andares: 4, tipo: "mianofix", inverter: true  },
   ],
 };
+
 const LADOS = ["A","B"];
 const EMPTY = { sku:"", nome:"", qtd:"", valorUnit:"", curva:"", loja:"", obs:"" };
 const EMPTY_AREA = { descricao:"", loja:"", qtd:"", valorUnit:"", obs:"" };
@@ -39,6 +42,7 @@ async function cloudSave(cells){
   if(!r.ok) throw new Error();
 }
 
+// P10: A1 e A2 = empilhadeira, A3 e A4 = normais
 function isAcesso(vaos, vao, andar){ return vaos === 10 && vao === 10 && andar <= 2; }
 
 export default function App() {
@@ -68,20 +72,17 @@ export default function App() {
     setCells(newCells); saveLocal(newCells); setCloud("saving");
     cloudSave(newCells)
       .then(()=>{ setCloud("ok"); setLastSave(new Date()); })
-      .catch(()=>{ setCloud("error"); showToast("Salvo so localmente","warn"); });
+      .catch(()=>{ setCloud("error"); showToast("Salvo localmente","warn"); });
   },[]);
 
   function openCell(id){ setSel(id); setForm(cells[id]?{...cells[id]}:{...EMPTY}); }
   function saveCell(){ if(!sel) return; persist({...cells,[sel]:{...form}}); setSel(null); showToast("Salvo na nuvem!"); }
   function clearCell(){ if(!sel) return; const n={...cells}; delete n[sel]; persist(n); setSel(null); showToast("Posicao limpa.","warn"); }
-
-  function openArea(slot, tipo){ setAreaModal({slot,tipo}); setAreaForm(cells[slot]?{...cells[slot]}:{...EMPTY_AREA}); }
+  function openArea(slot,tipo){ setAreaModal({slot,tipo}); setAreaForm(cells[slot]?{...cells[slot]}:{...EMPTY_AREA}); }
   function saveArea(){ if(!areaModal) return; persist({...cells,[areaModal.slot]:{...areaForm,_area:areaModal.tipo}}); setAreaModal(null); showToast("Salvo na nuvem!"); }
   function clearArea(){ if(!areaModal) return; const n={...cells}; delete n[areaModal.slot]; persist(n); setAreaModal(null); showToast("Limpo.","warn"); }
 
-  // Full: 40 paletes (5 colunas x 8 linhas)
   const fullSlots = Array.from({length:40},(_,i)=>`FULL-${String(i+1).padStart(2,"0")}`);
-  // Flex: 60 gavetas pequenas
   const flexSlots = Array.from({length:60},(_,i)=>`FLEX-${String(i+1).padStart(2,"0")}`);
 
   function exportCSV(){
@@ -106,7 +107,7 @@ export default function App() {
     });
     [...flexSlots,...fullSlots].forEach(slot=>{
       const c=cells[slot];
-      if(c&&(c.descricao||c.sku)) rows.push({id:slot,tipo:slot.startsWith("FLEX")?"flex":"full",...c});
+      if(c&&(c.descricao||c.loja)) rows.push({id:slot,tipo:slot.startsWith("FLEX")?"flex":"full",...c});
     });
     return rows;
   },[cells]);
@@ -138,127 +139,118 @@ export default function App() {
     error:{label:"Salvo localmente",color:"#fb923c"},
   }[cloud];
 
-  const CSS = `
-    *{box-sizing:border-box;margin:0;padding:0;}
-    ::-webkit-scrollbar{width:8px;height:8px;}
-    ::-webkit-scrollbar-track{background:#e2e8f0;}
-    ::-webkit-scrollbar-thumb{background:#94a3b8;border-radius:4px;}
-    .hdr{background:#1e3a5f;color:#fff;padding:12px 28px;display:flex;align-items:center;justify-content:space-between;box-shadow:0 2px 8px #0003;flex-wrap:wrap;gap:10px;}
-    .hdr-logo{font-size:18px;font-weight:700;}.hdr-sub{font-size:12px;color:#93c5fd;margin-top:2px;}
-    .hdr-right{display:flex;align-items:center;gap:12px;flex-wrap:wrap;}
-    .cloud-badge{font-size:13px;font-weight:700;padding:6px 14px;border-radius:20px;background:#ffffff22;}
-    .nav{display:flex;gap:6px;}
-    .nb{padding:9px 22px;font-family:inherit;font-size:14px;font-weight:600;border:none;border-radius:6px;cursor:pointer;background:transparent;color:#bfdbfe;transition:all .15s;}
-    .nb.on{background:#fff;color:#1e3a5f;}.nb:hover:not(.on){background:#ffffff22;color:#fff;}
-    .toolbar{background:#0f2942;padding:10px 28px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;border-bottom:2px solid #1e3a5f;}
-    .toolbar span{font-size:13px;color:#7dd3fc;font-weight:600;}
-    .tbtn{padding:8px 18px;font-family:inherit;font-size:13px;font-weight:700;border:1.5px solid;border-radius:6px;cursor:pointer;}
-    .tbtn-csv{background:#1c1917;color:#fb923c;border-color:#ea580c;}
-    .kbar{background:#fff;border-bottom:2px solid #e2e8f0;padding:14px 28px;display:flex;gap:12px;flex-wrap:wrap;}
-    .kpi{background:#f8fafc;border:1.5px solid #e2e8f0;border-radius:8px;padding:11px 20px;min-width:130px;}
-    .kpi-l{font-size:11px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:.5px;}
-    .kpi-v{font-size:24px;font-weight:800;margin-top:3px;}
-    .main{padding:24px 28px;}
-    .sec-title{font-size:13px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:#475569;margin-bottom:14px;display:flex;align-items:center;gap:8px;}
-    .sec-title::before{content:"";display:block;width:4px;height:18px;background:#1e3a5f;border-radius:2px;}
-    .legend{display:flex;gap:16px;flex-wrap:wrap;margin-bottom:16px;padding:12px 18px;background:#fff;border:1.5px solid #e2e8f0;border-radius:8px;align-items:center;}
-    .li{display:flex;align-items:center;gap:7px;font-size:13px;color:#374151;font-weight:500;}
-    .ld{width:18px;height:18px;border-radius:4px;border:2px solid;}
-    .wh{background:#fff;border:1.5px solid #e2e8f0;border-radius:10px;padding:24px;overflow-x:auto;box-shadow:0 2px 8px #0001;}
-    .corredor{background:#dbeafe;border:2px dashed #93c5fd;padding:10px 16px;font-size:12px;font-weight:700;letter-spacing:2px;color:#1d4ed8;text-align:center;border-radius:6px;margin:10px 0;}
-    .costas{background:#f1f5f9;border:1px dashed #cbd5e1;padding:3px 16px;font-size:11px;color:#94a3b8;text-align:center;border-radius:4px;margin:2px 0;}
-    .rua-block{display:flex;align-items:flex-start;gap:16px;margin-bottom:10px;}
-    .rua-lbl{width:72px;flex-shrink:0;padding-top:8px;}
-    .rua-lbl-main{font-size:15px;font-weight:800;color:#1e293b;}.rua-lbl-sub{font-size:11px;font-weight:700;margin-top:3px;}
-    .andares{display:flex;flex-direction:column;gap:4px;}
-    .andares.normal{flex-direction:column-reverse;}
-    .andar-row{display:flex;gap:2px;align-items:center;}
-    .a-lbl{width:28px;font-size:12px;font-weight:700;color:#94a3b8;text-align:right;flex-shrink:0;margin-right:2px;}
-    .vao-group{display:flex;gap:1px;margin-right:4px;}
-    .cell{border-radius:4px;cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;transition:all .15s;border:2px solid;flex-shrink:0;gap:2px;position:relative;}
-    .cell:hover{transform:scale(1.12);box-shadow:0 4px 14px #0003;z-index:5;}
-    .cell-acesso{border:2px dashed #e2e8f0!important;background:#f8fafc!important;cursor:default;}
-    .cell-dot{border-radius:50%;}
-    .cell-sku{font-size:8px;font-weight:800;color:#374151;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:0 2px;text-align:center;}
-    .cell-plus{font-size:16px;color:#cbd5e1;font-weight:300;line-height:1;}
-    .lado-tag{position:absolute;top:1px;left:2px;font-size:7px;font-weight:800;color:#94a3b8;}
-    .vao-lbl-row{display:flex;gap:4px;padding-left:32px;margin-top:5px;}
-    .vao-lbl{font-size:9px;font-weight:600;color:#cbd5e1;text-align:center;flex-shrink:0;}
-
-    /* FULL PRONTO - grade de paletes */
-    .full-section{background:#f0fdf4;border:2px solid #86efac;border-radius:10px;padding:16px;margin-top:16px;}
-    .full-title{font-size:14px;font-weight:800;color:#15803d;margin-bottom:4px;}
-    .full-sub{font-size:12px;color:#4ade80;margin-bottom:14px;}
-    .full-grid{display:grid;grid-template-columns:repeat(8,1fr);gap:6px;}
-    .palet-slot{height:62px;border-radius:6px;border:2px solid;cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;transition:all .15s;gap:2px;position:relative;}
-    .palet-slot:hover{transform:scale(1.05);box-shadow:0 3px 10px #0002;z-index:3;}
-    .palet-slot.empty{background:#f0fdf4;border-color:#86efac;}
-    .palet-slot.filled{background:#dcfce7;border-color:#4ade80;}
-    .palet-num{font-size:8px;font-weight:700;color:#94a3b8;position:absolute;top:3px;left:5px;}
-    .palet-desc{font-size:8px;font-weight:700;color:#15803d;max-width:90%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:center;}
-    .palet-loja{font-size:8px;color:#4ade80;max-width:90%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:center;}
-    .palet-dot{width:8px;height:8px;border-radius:50%;background:#4ade80;}
-
-    /* FLEX - gavetas */
-    .flex-section{background:#eff6ff;border:2px solid #93c5fd;border-radius:10px;padding:16px;margin-top:16px;}
-    .flex-title{font-size:14px;font-weight:800;color:#1d4ed8;margin-bottom:4px;}
-    .flex-sub{font-size:12px;color:#60a5fa;margin-bottom:14px;}
-    .flex-grid{display:grid;grid-template-columns:repeat(10,1fr);gap:3px;}
-    .gav-slot{height:44px;border-radius:4px;border:1.5px solid;cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;transition:all .12s;gap:1px;position:relative;}
-    .gav-slot:hover{transform:scale(1.06);box-shadow:0 2px 8px #0002;z-index:3;}
-    .gav-slot.empty{background:#eff6ff;border-color:#bfdbfe;}
-    .gav-slot.filled{background:#dbeafe;border-color:#3b82f6;}
-    .gav-num{font-size:7px;font-weight:700;color:#94a3b8;position:absolute;top:2px;left:3px;}
-    .gav-desc{font-size:7px;font-weight:700;color:#1d4ed8;max-width:95%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:center;}
-    .gav-dot{width:6px;height:6px;border-radius:50%;background:#3b82f6;}
-
-    .overlay{position:fixed;inset:0;background:#0006;display:flex;align-items:center;justify-content:center;z-index:200;}
-    .modal{background:#fff;border-radius:12px;width:520px;max-width:95vw;max-height:92vh;overflow-y:auto;box-shadow:0 24px 64px #0005;}
-    .modal-hdr{color:#fff;padding:22px 28px;border-radius:12px 12px 0 0;}
-    .modal-hdr.palet{background:#1e3a5f;}.modal-hdr.flex{background:#1d4ed8;}.modal-hdr.full{background:#15803d;}
-    .modal-hdr-id{font-size:20px;font-weight:800;}.modal-hdr-sub{font-size:13px;opacity:.8;margin-top:4px;}
-    .modal-body{padding:24px 28px;}
-    .alerta{background:#fef2f2;border:2px solid #fca5a5;border-radius:8px;padding:12px 16px;font-size:13px;color:#dc2626;font-weight:700;margin-bottom:16px;}
-    .field{margin-bottom:16px;}
-    .field label{display:block;font-size:12px;font-weight:700;color:#374151;text-transform:uppercase;letter-spacing:.8px;margin-bottom:6px;}
-    .field input,.field select{width:100%;background:#f8fafc;border:2px solid #e2e8f0;border-radius:8px;padding:12px 14px;color:#1e293b;font-family:inherit;font-size:15px;outline:none;transition:border-color .2s;}
-    .field input:focus,.field select:focus{border-color:#1d4ed8;background:#fff;}
-    .frow{display:grid;grid-template-columns:1fr 1fr;gap:14px;}
-    .vt-box{background:#f0fdf4;border:2px solid #86efac;border-radius:8px;padding:12px 16px;font-size:14px;color:#15803d;font-weight:700;margin-bottom:14px;}
-    .modal-foot{padding:18px 28px;border-top:2px solid #f1f5f9;display:flex;gap:10px;justify-content:flex-end;background:#f8fafc;border-radius:0 0 12px 12px;}
-    .btn{padding:11px 24px;font-family:inherit;font-size:14px;font-weight:700;border:none;border-radius:8px;cursor:pointer;transition:all .15s;}
-    .btn-primary{background:#1e3a5f;color:#fff;}.btn-primary:hover{background:#1d4ed8;}
-    .btn-success{background:#15803d;color:#fff;}.btn-success:hover{background:#16a34a;}
-    .btn-danger{background:#fef2f2;color:#dc2626;border:2px solid #fca5a5;}.btn-danger:hover{background:#fee2e2;}
-    .btn-ghost{background:#f1f5f9;color:#475569;border:2px solid #e2e8f0;}.btn-ghost:hover{background:#e2e8f0;}
-    .filters{display:flex;gap:10px;margin-bottom:18px;flex-wrap:wrap;align-items:center;}
-    .filters input,.filters select{background:#fff;border:2px solid #e2e8f0;border-radius:8px;padding:10px 14px;color:#1e293b;font-family:inherit;font-size:14px;outline:none;}
-    .filters input:focus,.filters select:focus{border-color:#1d4ed8;}
-    .tbl-wrap{background:#fff;border:1.5px solid #e2e8f0;border-radius:10px;overflow:hidden;}
-    table{width:100%;border-collapse:collapse;font-size:14px;}
-    th{background:#f1f5f9;color:#374151;text-transform:uppercase;letter-spacing:.8px;font-size:11px;font-weight:700;padding:12px 14px;text-align:left;border-bottom:2px solid #e2e8f0;white-space:nowrap;}
-    td{padding:11px 14px;border-bottom:1px solid #f1f5f9;color:#334155;}
-    tr:hover td{background:#f8fafc;}tr:last-child td{border-bottom:none;}
-    .badge{display:inline-block;padding:3px 10px;border-radius:20px;font-size:12px;font-weight:700;}
-    .badge-A{background:#fef2f2;color:#dc2626;}.badge-B{background:#fffbeb;color:#b45309;}.badge-C{background:#f0fdf4;color:#15803d;}
-    .badge-sf{background:#eff6ff;color:#1d4ed8;}.badge-mn{background:#fffbeb;color:#b45309;}
-    .badge-fx{background:#dbeafe;color:#1d4ed8;}.badge-fl{background:#dcfce7;color:#15803d;}
-    .fin-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px;margin-bottom:24px;}
-    .fin-card{background:#fff;border:1.5px solid #e2e8f0;border-radius:10px;padding:20px;}
-    .fin-card-title{font-size:12px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.8px;margin-bottom:8px;}
-    .fin-card-value{font-size:26px;font-weight:800;}.fin-card-sub{font-size:12px;color:#94a3b8;margin-top:5px;}
-    .prog-bar{height:7px;background:#e2e8f0;border-radius:4px;margin-top:12px;overflow:hidden;}
-    .prog-fill{height:100%;border-radius:4px;transition:width .6s;}
-    .toast{position:fixed;bottom:28px;right:28px;background:#1e3a5f;color:#fff;padding:14px 24px;border-radius:8px;font-size:14px;font-weight:700;box-shadow:0 8px 28px #0003;z-index:300;animation:slideUp .3s ease;}
-    .toast.warn{background:#b45309;}
-    @keyframes slideUp{from{transform:translateY(16px);opacity:0;}to{transform:translateY(0);opacity:1;}}
-    .empty-state{text-align:center;padding:70px 40px;color:#94a3b8;font-size:15px;line-height:1.8;}
-    .empty-state .icon{font-size:40px;margin-bottom:14px;}
-  `;
-
   return (
     <div style={{fontFamily:"'Segoe UI',system-ui,sans-serif",background:"#f1f5f9",minHeight:"100vh",color:"#1e293b"}}>
-      <style>{CSS}</style>
+      <style>{`
+        *{box-sizing:border-box;margin:0;padding:0;}
+        ::-webkit-scrollbar{width:8px;height:8px;}::-webkit-scrollbar-track{background:#e2e8f0;}::-webkit-scrollbar-thumb{background:#94a3b8;border-radius:4px;}
+        .hdr{background:#1e3a5f;color:#fff;padding:12px 28px;display:flex;align-items:center;justify-content:space-between;box-shadow:0 2px 8px #0003;flex-wrap:wrap;gap:10px;}
+        .hdr-logo{font-size:18px;font-weight:700;}.hdr-sub{font-size:12px;color:#93c5fd;margin-top:2px;}
+        .hdr-right{display:flex;align-items:center;gap:12px;flex-wrap:wrap;}
+        .cloud-badge{font-size:13px;font-weight:700;padding:6px 14px;border-radius:20px;background:#ffffff22;}
+        .nav{display:flex;gap:6px;}
+        .nb{padding:9px 22px;font-family:inherit;font-size:14px;font-weight:600;border:none;border-radius:6px;cursor:pointer;background:transparent;color:#bfdbfe;transition:all .15s;}
+        .nb.on{background:#fff;color:#1e3a5f;}.nb:hover:not(.on){background:#ffffff22;color:#fff;}
+        .toolbar{background:#0f2942;padding:10px 28px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;border-bottom:2px solid #1e3a5f;}
+        .toolbar span{font-size:13px;color:#7dd3fc;font-weight:600;}
+        .tbtn{padding:8px 18px;font-family:inherit;font-size:13px;font-weight:700;border:1.5px solid;border-radius:6px;cursor:pointer;}
+        .tbtn-csv{background:#1c1917;color:#fb923c;border-color:#ea580c;}
+        .kbar{background:#fff;border-bottom:2px solid #e2e8f0;padding:14px 28px;display:flex;gap:12px;flex-wrap:wrap;}
+        .kpi{background:#f8fafc;border:1.5px solid #e2e8f0;border-radius:8px;padding:11px 20px;min-width:130px;}
+        .kpi-l{font-size:11px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:.5px;}
+        .kpi-v{font-size:24px;font-weight:800;margin-top:3px;}
+        .main{padding:24px 28px;}
+        .sec-title{font-size:13px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:#475569;margin-bottom:14px;display:flex;align-items:center;gap:8px;}
+        .sec-title::before{content:"";display:block;width:4px;height:18px;background:#1e3a5f;border-radius:2px;}
+        .legend{display:flex;gap:16px;flex-wrap:wrap;margin-bottom:16px;padding:12px 18px;background:#fff;border:1.5px solid #e2e8f0;border-radius:8px;align-items:center;}
+        .li{display:flex;align-items:center;gap:7px;font-size:13px;color:#374151;font-weight:500;}
+        .ld{width:18px;height:18px;border-radius:4px;border:2px solid;}
+        .wh{background:#fff;border:1.5px solid #e2e8f0;border-radius:10px;padding:24px;overflow-x:auto;box-shadow:0 2px 8px #0001;}
+        .corredor{background:#dbeafe;border:2px dashed #93c5fd;padding:10px 16px;font-size:12px;font-weight:700;letter-spacing:2px;color:#1d4ed8;text-align:center;border-radius:6px;margin:10px 0;}
+        .costas{background:#f1f5f9;border:1px dashed #cbd5e1;padding:3px 16px;font-size:11px;color:#94a3b8;text-align:center;border-radius:4px;margin:2px 0;}
+        .rua-block{display:flex;align-items:flex-start;gap:16px;margin-bottom:10px;}
+        .rua-lbl{width:72px;flex-shrink:0;padding-top:8px;}
+        .rua-lbl-main{font-size:15px;font-weight:800;color:#1e293b;}.rua-lbl-sub{font-size:11px;font-weight:700;margin-top:3px;}
+        .andares{display:flex;gap:4px;}
+        .andar-row{display:flex;gap:2px;align-items:center;}
+        .a-lbl{width:28px;font-size:12px;font-weight:700;color:#94a3b8;text-align:right;flex-shrink:0;margin-right:2px;}
+        .vao-group{display:flex;gap:1px;margin-right:4px;}
+        .cell{border-radius:4px;cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;transition:all .15s;border:2px solid;flex-shrink:0;gap:2px;position:relative;}
+        .cell:hover{transform:scale(1.12);box-shadow:0 4px 14px #0003;z-index:5;}
+        .cell-acesso{border:2px dashed #e2e8f0!important;background:#f8fafc!important;cursor:default;}
+        .cell-dot{border-radius:50%;}
+        .cell-sku{font-size:8px;font-weight:800;color:#374151;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:0 2px;text-align:center;}
+        .cell-plus{font-size:16px;color:#cbd5e1;font-weight:300;line-height:1;}
+        .lado-tag{position:absolute;top:1px;left:2px;font-size:7px;font-weight:800;color:#94a3b8;}
+        .vao-lbl-row{display:flex;gap:4px;padding-left:32px;margin-top:5px;}
+        .vao-lbl{font-size:9px;font-weight:600;color:#cbd5e1;text-align:center;flex-shrink:0;}
+        .areas-row{display:grid;grid-template-columns:3fr 2fr;gap:14px;margin-top:16px;}
+        .full-box{background:#f0fdf4;border:2px solid #86efac;border-radius:10px;padding:14px;}
+        .full-title{font-size:13px;font-weight:800;color:#15803d;margin-bottom:3px;}
+        .full-sub{font-size:11px;color:#4ade80;margin-bottom:10px;}
+        .full-grid{display:grid;grid-template-columns:repeat(8,1fr);gap:5px;}
+        .palet{height:58px;border-radius:6px;border:2px solid;cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;transition:all .15s;gap:2px;position:relative;}
+        .palet:hover{transform:scale(1.05);box-shadow:0 3px 10px #0002;z-index:3;}
+        .palet.empty{background:#f0fdf4;border-color:#86efac;}
+        .palet.filled{background:#dcfce7;border-color:#4ade80;}
+        .palet-num{font-size:8px;font-weight:700;color:#94a3b8;position:absolute;top:3px;left:4px;}
+        .palet-dot{width:8px;height:8px;border-radius:50%;background:#4ade80;}
+        .palet-loja{font-size:8px;font-weight:700;color:#15803d;max-width:90%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:center;}
+        .palet-desc{font-size:7px;color:#4ade80;max-width:90%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:center;}
+        .flex-box{background:#eff6ff;border:2px solid #93c5fd;border-radius:10px;padding:14px;}
+        .flex-title{font-size:13px;font-weight:800;color:#1d4ed8;margin-bottom:3px;}
+        .flex-sub{font-size:11px;color:#60a5fa;margin-bottom:10px;}
+        .flex-grid{display:grid;grid-template-columns:repeat(6,1fr);gap:3px;}
+        .gav{height:36px;border-radius:3px;border:1.5px solid;cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;transition:all .12s;gap:1px;position:relative;}
+        .gav:hover{transform:scale(1.08);box-shadow:0 2px 6px #0002;z-index:3;}
+        .gav.empty{background:#eff6ff;border-color:#bfdbfe;}
+        .gav.filled{background:#dbeafe;border-color:#3b82f6;}
+        .gav-num{font-size:7px;font-weight:700;color:#94a3b8;position:absolute;top:1px;left:2px;}
+        .gav-dot{width:6px;height:6px;border-radius:50%;background:#3b82f6;}
+        .gav-desc{font-size:7px;font-weight:700;color:#1d4ed8;max-width:95%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:center;}
+        .overlay{position:fixed;inset:0;background:#0006;display:flex;align-items:center;justify-content:center;z-index:200;}
+        .modal{background:#fff;border-radius:12px;width:520px;max-width:95vw;max-height:92vh;overflow-y:auto;box-shadow:0 24px 64px #0005;}
+        .modal-hdr{color:#fff;padding:22px 28px;border-radius:12px 12px 0 0;}
+        .modal-hdr.palet{background:#1e3a5f;}.modal-hdr.flex{background:#1d4ed8;}.modal-hdr.full{background:#15803d;}
+        .modal-hdr-id{font-size:20px;font-weight:800;}.modal-hdr-sub{font-size:13px;opacity:.8;margin-top:4px;}
+        .modal-body{padding:24px 28px;}
+        .alerta{background:#fef2f2;border:2px solid #fca5a5;border-radius:8px;padding:12px 16px;font-size:13px;color:#dc2626;font-weight:700;margin-bottom:16px;}
+        .field{margin-bottom:16px;}
+        .field label{display:block;font-size:12px;font-weight:700;color:#374151;text-transform:uppercase;letter-spacing:.8px;margin-bottom:6px;}
+        .field input,.field select{width:100%;background:#f8fafc;border:2px solid #e2e8f0;border-radius:8px;padding:12px 14px;color:#1e293b;font-family:inherit;font-size:15px;outline:none;transition:border-color .2s;}
+        .field input:focus,.field select:focus{border-color:#1d4ed8;background:#fff;}
+        .frow{display:grid;grid-template-columns:1fr 1fr;gap:14px;}
+        .vt-box{background:#f0fdf4;border:2px solid #86efac;border-radius:8px;padding:12px 16px;font-size:14px;color:#15803d;font-weight:700;margin-bottom:14px;}
+        .modal-foot{padding:18px 28px;border-top:2px solid #f1f5f9;display:flex;gap:10px;justify-content:flex-end;background:#f8fafc;border-radius:0 0 12px 12px;}
+        .btn{padding:11px 24px;font-family:inherit;font-size:14px;font-weight:700;border:none;border-radius:8px;cursor:pointer;transition:all .15s;}
+        .btn-primary{background:#1e3a5f;color:#fff;}.btn-primary:hover{background:#1d4ed8;}
+        .btn-success{background:#15803d;color:#fff;}.btn-success:hover{background:#16a34a;}
+        .btn-danger{background:#fef2f2;color:#dc2626;border:2px solid #fca5a5;}.btn-danger:hover{background:#fee2e2;}
+        .btn-ghost{background:#f1f5f9;color:#475569;border:2px solid #e2e8f0;}.btn-ghost:hover{background:#e2e8f0;}
+        .filters{display:flex;gap:10px;margin-bottom:18px;flex-wrap:wrap;align-items:center;}
+        .filters input,.filters select{background:#fff;border:2px solid #e2e8f0;border-radius:8px;padding:10px 14px;color:#1e293b;font-family:inherit;font-size:14px;outline:none;}
+        .filters input:focus,.filters select:focus{border-color:#1d4ed8;}
+        .tbl-wrap{background:#fff;border:1.5px solid #e2e8f0;border-radius:10px;overflow:hidden;}
+        table{width:100%;border-collapse:collapse;font-size:14px;}
+        th{background:#f1f5f9;color:#374151;text-transform:uppercase;letter-spacing:.8px;font-size:11px;font-weight:700;padding:12px 14px;text-align:left;border-bottom:2px solid #e2e8f0;white-space:nowrap;}
+        td{padding:11px 14px;border-bottom:1px solid #f1f5f9;color:#334155;}
+        tr:hover td{background:#f8fafc;}tr:last-child td{border-bottom:none;}
+        .badge{display:inline-block;padding:3px 10px;border-radius:20px;font-size:12px;font-weight:700;}
+        .badge-A{background:#fef2f2;color:#dc2626;}.badge-B{background:#fffbeb;color:#b45309;}.badge-C{background:#f0fdf4;color:#15803d;}
+        .badge-sf{background:#eff6ff;color:#1d4ed8;}.badge-mn{background:#fffbeb;color:#b45309;}
+        .badge-fx{background:#dbeafe;color:#1d4ed8;}.badge-fl{background:#dcfce7;color:#15803d;}
+        .fin-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px;margin-bottom:24px;}
+        .fin-card{background:#fff;border:1.5px solid #e2e8f0;border-radius:10px;padding:20px;}
+        .fin-card-title{font-size:12px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.8px;margin-bottom:8px;}
+        .fin-card-value{font-size:26px;font-weight:800;}.fin-card-sub{font-size:12px;color:#94a3b8;margin-top:5px;}
+        .prog-bar{height:7px;background:#e2e8f0;border-radius:4px;margin-top:12px;overflow:hidden;}
+        .prog-fill{height:100%;border-radius:4px;transition:width .6s;}
+        .toast{position:fixed;bottom:28px;right:28px;background:#1e3a5f;color:#fff;padding:14px 24px;border-radius:8px;font-size:14px;font-weight:700;box-shadow:0 8px 28px #0003;z-index:300;animation:slideUp .3s ease;}
+        .toast.warn{background:#b45309;}
+        @keyframes slideUp{from{transform:translateY(16px);opacity:0;}to{transform:translateY(0);opacity:1;}}
+        .empty-state{text-align:center;padding:70px 40px;color:#94a3b8;font-size:15px;line-height:1.8;}
+        .empty-state .icon{font-size:40px;margin-bottom:14px;}
+      `}</style>
 
       <div className="hdr">
         <div><div className="hdr-logo">WMS - Several Importados</div><div className="hdr-sub">Gestao de Armazem - Mianofix e Iscali</div></div>
@@ -297,115 +289,120 @@ export default function App() {
             <div className="li"><div className="ld" style={{background:"#f0fdf4",borderColor:"#86efac"}}></div>Curva C</div>
             <div style={{marginLeft:"auto",background:"#fefce8",border:"1.5px solid #fde047",borderRadius:"6px",padding:"6px 14px",fontSize:"12px",color:"#854d0e",fontWeight:700}}>Andares 3 e 4 so Curva B ou C</div>
           </div>
+
           <div className="wh">
             {WAREHOUSE.ruas.map((rua,ri)=>{
-              const CW=28,CH=42;
-              // Andares: ruas normais = A1 embaixo (column-reverse), ruas invertidas = A1 em cima (column)
-              // inverter=true significa A1 fica embaixo visualmente (proximo ao corredor acima)
+              const CW=28, CH=42;
+              // inverter=true: A1 aparece no TOPO (flex-direction: column, ordem 1,2,3,4 de cima pra baixo)
+              // inverter=false: A4 aparece no TOPO (flex-direction: column-reverse, ordem 1,2,3,4 de baixo pra cima)
               const andaresList = rua.inverter ? [1,2,3,4] : [4,3,2,1];
-              return(<div key={rua.id}>
-                {ri===1&&<div className="corredor">CORREDOR</div>}
-                {ri===2&&<div className="costas">costas com costas - Ruas 2 e 3</div>}
-                {ri===3&&<div className="corredor">CORREDOR</div>}
-                {ri===4&&<div className="costas">costas com costas - Ruas 4 e 5</div>}
-                <div className="rua-block">
-                  <div className="rua-lbl">
-                    <div className="rua-lbl-main">{rua.label}</div>
-                    <div className="rua-lbl-sub" style={{color:rua.tipo==="seufull"?"#1d4ed8":"#b45309"}}>{rua.tipo==="seufull"?"SEU FULL":"MIANOFIX"}</div>
-                  </div>
-                  <div>
-                    <div className={`andares${rua.inverter?"":" normal"}`}>
-                      {andaresList.map(andar=>(
-                        <div key={andar} className="andar-row">
-                          <div className="a-lbl">A{andar}</div>
-                          {Array.from({length:rua.vaos},(_,vi)=>{
-                            const vao=vi+1;
-                            if(isAcesso(rua.vaos,vao,andar)){
+              return (
+                <div key={rua.id}>
+                  {ri===1 && <div className="corredor">CORREDOR</div>}
+                  {ri===2 && <div className="costas">costas com costas - Ruas 2 e 3</div>}
+                  {ri===3 && <div className="corredor">CORREDOR</div>}
+                  {ri===4 && <div className="costas">costas com costas - Ruas 4 e 5</div>}
+                  <div className="rua-block">
+                    <div className="rua-lbl">
+                      <div className="rua-lbl-main">{rua.label}</div>
+                      <div className="rua-lbl-sub" style={{color:rua.tipo==="seufull"?"#1d4ed8":"#b45309"}}>{rua.tipo==="seufull"?"SEU FULL":"MIANOFIX"}</div>
+                    </div>
+                    <div>
+                      <div className="andares" style={{flexDirection: rua.inverter ? "column" : "column-reverse"}}>
+                        {andaresList.map(andar=>(
+                          <div key={andar} className="andar-row">
+                            <div className="a-lbl">A{andar}</div>
+                            {Array.from({length:rua.vaos},(_,vi)=>{
+                              const vao=vi+1;
+                              if(isAcesso(rua.vaos,vao,andar)){
+                                return(
+                                  <div key={vao} className="vao-group">
+                                    <div className="cell cell-acesso" style={{width:CW*2+1,height:CH}}>
+                                      <span style={{fontSize:"7px",color:"#94a3b8",fontWeight:700}}>EMP.</span>
+                                    </div>
+                                  </div>
+                                );
+                              }
                               return(
                                 <div key={vao} className="vao-group">
-                                  <div className="cell cell-acesso" style={{width:CW*2+1,height:CH}}>
-                                    <span style={{fontSize:"7px",color:"#94a3b8",fontWeight:700}}>EMP.</span>
-                                  </div>
+                                  {LADOS.map(lado=>{
+                                    const id=cellId(rua.id,vao,lado,andar);
+                                    const c=cells[id], has=c&&c.sku;
+                                    let bg,bc;
+                                    if(!has){bg=rua.tipo==="seufull"?"#eff6ff":"#fffbeb";bc=rua.tipo==="seufull"?"#93c5fd":"#fcd34d";}
+                                    else{const cv=c.curva||"X";const bgs={A:"#fef2f2",B:"#fffbeb",C:"#f0fdf4",X:"#f8fafc"};const bcs={A:"#fca5a5",B:"#fcd34d",C:"#86efac",X:"#e2e8f0"};bg=bgs[cv];bc=bcs[cv];}
+                                    return(
+                                      <div key={lado} className="cell" style={{width:CW,height:CH,background:bg,borderColor:bc}}
+                                        title={has?`${c.sku} - ${c.nome}`:id+" vazio"}
+                                        onClick={()=>openCell(id)}>
+                                        <span className="lado-tag">{lado}</span>
+                                        {has?<><div className="cell-dot" style={{width:7,height:7,background:CURVA_COLORS[c.curva||""]}}></div><div className="cell-sku" style={{width:CW-6}}>{c.sku}</div></>:<span className="cell-plus">+</span>}
+                                      </div>
+                                    );
+                                  })}
                                 </div>
                               );
-                            }
-                            return(
-                              <div key={vao} className="vao-group">
-                                {LADOS.map(lado=>{
-                                  const id=cellId(rua.id,vao,lado,andar);
-                                  const c=cells[id],has=c&&c.sku;
-                                  let bg,bc;
-                                  if(!has){bg=rua.tipo==="seufull"?"#eff6ff":"#fffbeb";bc=rua.tipo==="seufull"?"#93c5fd":"#fcd34d";}
-                                  else{const cv=c.curva||"X";const bgs={A:"#fef2f2",B:"#fffbeb",C:"#f0fdf4",X:"#f8fafc"};const bcs={A:"#fca5a5",B:"#fcd34d",C:"#86efac",X:"#e2e8f0"};bg=bgs[cv];bc=bcs[cv];}
-                                  return(
-                                    <div key={lado} className="cell" style={{width:CW,height:CH,background:bg,borderColor:bc}}
-                                      title={has?`${c.sku} - ${c.nome}`:id+" vazio"}
-                                      onClick={()=>openCell(id)}>
-                                      <span className="lado-tag">{lado}</span>
-                                      {has?<><div className="cell-dot" style={{width:7,height:7,background:CURVA_COLORS[c.curva||""]}}></div><div className="cell-sku" style={{width:CW-6}}>{c.sku}</div></>:<span className="cell-plus">+</span>}
-                                    </div>
-                                  );
-                                })}
-                              </div>
-                            );
-                          })}
-                        </div>
-                      ))}
-                    </div>
-                    <div className="vao-lbl-row">
-                      {Array.from({length:rua.vaos},(_,vi)=>(
-                        <div key={vi} className="vao-lbl" style={{width:CW*2+1+4}}>P{vi+1}</div>
-                      ))}
+                            })}
+                          </div>
+                        ))}
+                      </div>
+                      <div className="vao-lbl-row">
+                        {Array.from({length:rua.vaos},(_,vi)=>(
+                          <div key={vi} className="vao-lbl" style={{width:CW*2+1+4}}>P{vi+1}</div>
+                        ))}
+                      </div>
                     </div>
                   </div>
                 </div>
-              </div>);
+              );
             })}
 
-            {/* FULL PRONTO - 40 paletes em grade */}
-            <div className="full-section">
-              <div className="full-title">Full Pronto</div>
-              <div className="full-sub">40 posicoes de palete - mercadorias processadas aguardando despacho</div>
-              <div className="full-grid">
-                {fullSlots.map(slot=>{
-                  const c=cells[slot],has=c&&(c.descricao||c.loja);
-                  return(
-                    <div key={slot} className={`palet-slot ${has?"filled":"empty"}`}
-                      onClick={()=>openArea(slot,"full")}
-                      title={has?`${c.loja||""} - ${c.descricao||""}`:slot}>
-                      <span className="palet-num">{slot.replace("FULL-","")}</span>
-                      {has
-                        ?<><div className="palet-dot"></div><div className="palet-loja">{c.loja||"-"}</div><div className="palet-desc">{c.descricao||"-"}</div></>
-                        :<span style={{fontSize:"18px",color:"#86efac"}}>+</span>
-                      }
-                    </div>
-                  );
-                })}
+            {/* FULL PRONTO + FLEX lado a lado */}
+            <div className="areas-row">
+              {/* FULL PRONTO - 40 paletes */}
+              <div className="full-box">
+                <div className="full-title">Full Pronto</div>
+                <div className="full-sub">40 paletes - aguardando despacho</div>
+                <div className="full-grid">
+                  {fullSlots.map(slot=>{
+                    const c=cells[slot], has=c&&(c.descricao||c.loja);
+                    return(
+                      <div key={slot} className={`palet ${has?"filled":"empty"}`}
+                        onClick={()=>openArea(slot,"full")}
+                        title={has?`${c.loja||""} - ${c.descricao||""}`:slot}>
+                        <span className="palet-num">{slot.replace("FULL-","")}</span>
+                        {has
+                          ?<><div className="palet-dot"></div><div className="palet-loja">{c.loja||"-"}</div><div className="palet-desc">{c.descricao||""}</div></>
+                          :<span style={{fontSize:"18px",color:"#86efac"}}>+</span>
+                        }
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* ESTOQUE FLEX - 60 gavetas compactas */}
+              <div className="flex-box">
+                <div className="flex-title">Estoque Flex</div>
+                <div className="flex-sub">60 gavetas - estoque picado</div>
+                <div className="flex-grid">
+                  {flexSlots.map(slot=>{
+                    const c=cells[slot], has=c&&(c.descricao||c.loja);
+                    return(
+                      <div key={slot} className={`gav ${has?"filled":"empty"}`}
+                        onClick={()=>openArea(slot,"flex")}
+                        title={has?`${c.loja||""} - ${c.descricao||""}`:slot}>
+                        <span className="gav-num">{slot.replace("FLEX-","")}</span>
+                        {has
+                          ?<><div className="gav-dot"></div><div className="gav-desc">{c.descricao||c.loja}</div></>
+                          :<span style={{fontSize:"12px",color:"#93c5fd"}}>+</span>
+                        }
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
             </div>
-
-            {/* ESTOQUE FLEX - 60 gavetas */}
-            <div className="flex-section">
-              <div className="flex-title">Estoque Flex</div>
-              <div className="flex-sub">60 gavetas - mini porta-paletes, estoque picado e caixas abertas</div>
-              <div className="flex-grid">
-                {flexSlots.map(slot=>{
-                  const c=cells[slot],has=c&&(c.descricao||c.loja);
-                  return(
-                    <div key={slot} className={`gav-slot ${has?"filled":"empty"}`}
-                      onClick={()=>openArea(slot,"flex")}
-                      title={has?`${c.loja||""} - ${c.descricao||""}`:slot}>
-                      <span className="gav-num">{slot.replace("FLEX-","")}</span>
-                      {has
-                        ?<><div className="gav-dot"></div><div className="gav-desc">{c.descricao||c.loja||"-"}</div></>
-                        :<span style={{fontSize:"13px",color:"#93c5fd"}}>+</span>
-                      }
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-
           </div>
         </>}
 
@@ -486,7 +483,7 @@ export default function App() {
             })}
           </div>
           <div style={{background:"#fefce8",border:"2px solid #fde047",borderRadius:"10px",padding:"18px 22px",fontSize:"14px",color:"#854d0e",lineHeight:1.8,fontWeight:600}}>
-            Regra de Ouro: Curva A sempre nos Andares 1 e 2. Andares 3 e 4 para Curva C - o que voce acessa uma vez por semana.
+            Regra de Ouro: Curva A sempre nos Andares 1 e 2. Andares 3 e 4 para Curva C.
           </div>
         </>}
       </div>
@@ -548,3 +545,4 @@ export default function App() {
     </div>
   );
 }
+
