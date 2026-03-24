@@ -42,6 +42,83 @@ async function cloudSave(cells){
   if(!r.ok) throw new Error();
 }
 
+// Gera etiqueta HTML e abre janela de impressao
+function printLabel(id, cell, ruaTipo) {
+  const [ruaId, vaoPart, andarPart] = id.split("-");
+  const vao = vaoPart;
+  const andar = andarPart;
+  const qrData = encodeURIComponent(id);
+  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=120x120&data=${qrData}`;
+  const html = `<!DOCTYPE html><html><head><meta charset="UTF-8">
+  <title>Etiqueta ${id}</title>
+  <style>
+    @page { size: 100mm 150mm; margin: 0; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { width: 100mm; height: 150mm; font-family: 'Arial', sans-serif; padding: 6mm; background: #fff; }
+    .header { background: #1e3a5f; color: white; padding: 5mm; border-radius: 3mm; margin-bottom: 4mm; text-align: center; }
+    .header h1 { font-size: 14pt; font-weight: 900; letter-spacing: 1px; }
+    .header p { font-size: 8pt; opacity: 0.8; margin-top: 1mm; }
+    .address-box { background: #f0f9ff; border: 2px solid #1e3a5f; border-radius: 3mm; padding: 4mm; margin-bottom: 4mm; text-align: center; }
+    .address-box .label { font-size: 7pt; color: #666; text-transform: uppercase; letter-spacing: 1px; }
+    .address-box .value { font-size: 22pt; font-weight: 900; color: #1e3a5f; line-height: 1.1; }
+    .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 2mm; margin-bottom: 4mm; }
+    .info-box { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 2mm; padding: 3mm; }
+    .info-box .label { font-size: 7pt; color: #888; text-transform: uppercase; }
+    .info-box .value { font-size: 10pt; font-weight: 700; color: #1e293b; margin-top: 1mm; word-break: break-word; }
+    .produto-box { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 2mm; padding: 3mm; margin-bottom: 3mm; }
+    .produto-box .label { font-size: 7pt; color: #888; text-transform: uppercase; }
+    .produto-box .value { font-size: 11pt; font-weight: 700; color: #1e293b; margin-top: 1mm; }
+    .bottom { display: flex; align-items: center; justify-content: space-between; }
+    .qr-area { text-align: center; }
+    .qr-area img { width: 24mm; height: 24mm; }
+    .qr-area p { font-size: 6pt; color: #888; margin-top: 1mm; }
+    .qty-box { flex: 1; margin-right: 4mm; background: #f0fdf4; border: 2px solid #16a34a; border-radius: 3mm; padding: 4mm; text-align: center; }
+    .qty-box .label { font-size: 7pt; color: #16a34a; text-transform: uppercase; letter-spacing: 1px; }
+    .qty-box .value { font-size: 24pt; font-weight: 900; color: #15803d; }
+    .footer { text-align: center; font-size: 6pt; color: #ccc; margin-top: 2mm; }
+  </style>
+  </head><body>
+  <div class="header">
+    <h1>WMS SEU FULL</h1>
+    <p>Etiqueta de Identificacao de Palete</p>
+  </div>
+  <div class="address-box">
+    <div class="label">Endereco</div>
+    <div class="value">${id}</div>
+  </div>
+  <div class="info-grid">
+    <div class="info-box">
+      <div class="label">SKU / Codigo</div>
+      <div class="value">${cell?.sku || '-'}</div>
+    </div>
+    <div class="info-box">
+      <div class="label">Curva ABC</div>
+      <div class="value">${cell?.curva || '-'}</div>
+    </div>
+    ${cell?.loja ? `<div class="info-box" style="grid-column:1/-1"><div class="label">Loja de Origem</div><div class="value">${cell.loja}</div></div>` : ''}
+  </div>
+  <div class="produto-box">
+    <div class="label">Produto</div>
+    <div class="value">${cell?.nome || 'Posicao vazia'}</div>
+  </div>
+  <div class="bottom">
+    <div class="qty-box">
+      <div class="label">Quantidade</div>
+      <div class="value">${cell?.qtd || '0'}</div>
+    </div>
+    <div class="qr-area">
+      <img src="${qrUrl}" alt="QR"/>
+      <p>Escaneie para<br/>localizar</p>
+    </div>
+  </div>
+  <div class="footer">Impresso em ${new Date().toLocaleDateString('pt-BR')} ${new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}</div>
+  </body></html>`;
+  const win = window.open('', '_blank', 'width=400,height=600');
+  win.document.write(html);
+  win.document.close();
+  setTimeout(() => win.print(), 800);
+}
+
 // P10: A1 e A2 = empilhadeira, A3 e A4 = normais
 function isAcesso(vaos, vao, andar){ return vaos === 10 && vao === 10 && andar <= 2; }
 
@@ -253,7 +330,7 @@ export default function App() {
       `}</style>
 
       <div className="hdr">
-        <div><div className="hdr-logo">WMS - Several Importados</div><div className="hdr-sub">Gestao de Armazem - Mianofix e Iscali</div></div>
+        <div><div className="hdr-logo">WMS SEU FULL</div><div className="hdr-sub">Sistema de Gestao de Armazem</div></div>
         <div className="hdr-right">
           <div className="cloud-badge" style={{color:cloudInfo.color}}>{cloudInfo.label}</div>
           <nav className="nav">
@@ -512,6 +589,7 @@ export default function App() {
           <div className="modal-foot">
             <button className="btn btn-danger" onClick={clearCell}>Limpar</button>
             <button className="btn btn-ghost" onClick={()=>setSel(null)}>Cancelar</button>
+            {cells[sel]?.sku && <button className="btn" style={{background:"#f59e0b",color:"#fff"}} onClick={()=>printLabel(sel,cells[sel],selRuaObj?.tipo)}>Imprimir Etiqueta</button>}
             <button className="btn btn-primary" onClick={saveCell}>Salvar na Nuvem</button>
           </div>
         </div>
