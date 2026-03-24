@@ -42,78 +42,107 @@ async function cloudSave(cells){
   if(!r.ok) throw new Error();
 }
 
-// Gera etiqueta HTML e abre janela de impressao
+// Gera etiqueta A4 e abre janela de impressao
 function printLabel(id, cell, ruaTipo) {
-  const [ruaId, vaoPart, andarPart] = id.split("-");
-  const vao = vaoPart;
-  const andar = andarPart;
   const qrData = encodeURIComponent(id);
-  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=120x120&data=${qrData}`;
+  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${qrData}`;
+  const valorTotal = ((parseFloat(cell?.qtd)||0)*(parseFloat(cell?.valorUnit)||0)).toLocaleString('pt-BR',{minimumFractionDigits:2});
   const html = `<!DOCTYPE html><html><head><meta charset="UTF-8">
   <title>Etiqueta ${id}</title>
   <style>
-    @page { size: 100mm 150mm; margin: 0; }
+    @page { size: A4; margin: 15mm; }
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { width: 100mm; height: 150mm; font-family: 'Arial', sans-serif; padding: 6mm; background: #fff; }
-    .header { background: #1e3a5f; color: white; padding: 5mm; border-radius: 3mm; margin-bottom: 4mm; text-align: center; }
-    .header h1 { font-size: 14pt; font-weight: 900; letter-spacing: 1px; }
-    .header p { font-size: 8pt; opacity: 0.8; margin-top: 1mm; }
-    .address-box { background: #f0f9ff; border: 2px solid #1e3a5f; border-radius: 3mm; padding: 4mm; margin-bottom: 4mm; text-align: center; }
-    .address-box .label { font-size: 7pt; color: #666; text-transform: uppercase; letter-spacing: 1px; }
-    .address-box .value { font-size: 22pt; font-weight: 900; color: #1e3a5f; line-height: 1.1; }
-    .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 2mm; margin-bottom: 4mm; }
-    .info-box { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 2mm; padding: 3mm; }
-    .info-box .label { font-size: 7pt; color: #888; text-transform: uppercase; }
-    .info-box .value { font-size: 10pt; font-weight: 700; color: #1e293b; margin-top: 1mm; word-break: break-word; }
-    .produto-box { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 2mm; padding: 3mm; margin-bottom: 3mm; }
-    .produto-box .label { font-size: 7pt; color: #888; text-transform: uppercase; }
-    .produto-box .value { font-size: 11pt; font-weight: 700; color: #1e293b; margin-top: 1mm; }
-    .bottom { display: flex; align-items: center; justify-content: space-between; }
-    .qr-area { text-align: center; }
-    .qr-area img { width: 24mm; height: 24mm; }
-    .qr-area p { font-size: 6pt; color: #888; margin-top: 1mm; }
-    .qty-box { flex: 1; margin-right: 4mm; background: #f0fdf4; border: 2px solid #16a34a; border-radius: 3mm; padding: 4mm; text-align: center; }
-    .qty-box .label { font-size: 7pt; color: #16a34a; text-transform: uppercase; letter-spacing: 1px; }
-    .qty-box .value { font-size: 24pt; font-weight: 900; color: #15803d; }
-    .footer { text-align: center; font-size: 6pt; color: #ccc; margin-top: 2mm; }
+    body { font-family: 'Arial', sans-serif; background: #fff; color: #1e293b; }
+    .header { background: #1e3a5f; color: white; padding: 12mm 15mm; display: flex; justify-content: space-between; align-items: center; margin-bottom: 8mm; border-radius: 4mm; }
+    .header-left h1 { font-size: 28pt; font-weight: 900; letter-spacing: 2px; }
+    .header-left p { font-size: 11pt; opacity: 0.7; margin-top: 2mm; }
+    .header-right { font-size: 10pt; opacity: 0.6; text-align: right; }
+    .address-section { background: #e8f4fd; border: 3px solid #1e3a5f; border-radius: 4mm; padding: 8mm 12mm; margin-bottom: 8mm; text-align: center; }
+    .address-section .label { font-size: 10pt; color: #666; text-transform: uppercase; letter-spacing: 2px; margin-bottom: 3mm; }
+    .address-section .value { font-size: 48pt; font-weight: 900; color: #1e3a5f; letter-spacing: 3px; line-height: 1; }
+    .main-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6mm; margin-bottom: 8mm; }
+    .produto-section { background: #f8fafc; border: 2px solid #e2e8f0; border-radius: 4mm; padding: 7mm; }
+    .section-label { font-size: 9pt; color: #888; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 3mm; }
+    .produto-nome { font-size: 18pt; font-weight: 900; color: #1e293b; line-height: 1.2; margin-bottom: 4mm; }
+    .info-row { display: flex; gap: 4mm; margin-top: 3mm; }
+    .info-chip { background: #fff; border: 1.5px solid #e2e8f0; border-radius: 2mm; padding: 3mm 5mm; flex: 1; }
+    .info-chip .lbl { font-size: 8pt; color: #888; text-transform: uppercase; }
+    .info-chip .val { font-size: 14pt; font-weight: 800; color: #1e293b; margin-top: 1mm; }
+    .qr-section { display: flex; flex-direction: column; align-items: center; justify-content: center; background: #f8fafc; border: 2px solid #e2e8f0; border-radius: 4mm; padding: 7mm; }
+    .qr-section img { width: 55mm; height: 55mm; margin-bottom: 4mm; }
+    .qr-section p { font-size: 9pt; color: #888; text-align: center; }
+    .bottom-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 6mm; margin-bottom: 8mm; }
+    .big-card { border-radius: 4mm; padding: 6mm; text-align: center; }
+    .big-card.qty { background: #f0fdf4; border: 2px solid #16a34a; }
+    .big-card.valor { background: #eff6ff; border: 2px solid #3b82f6; }
+    .big-card.curva { background: #fef2f2; border: 2px solid #ef4444; }
+    .big-card.curvaB { background: #fffbeb; border: 2px solid #f59e0b; }
+    .big-card.curvaC { background: #f0fdf4; border: 2px solid #16a34a; }
+    .big-card .lbl { font-size: 9pt; text-transform: uppercase; letter-spacing: 1px; opacity: 0.7; margin-bottom: 2mm; }
+    .big-card .val { font-size: 32pt; font-weight: 900; }
+    .big-card.qty .val { color: #15803d; }
+    .big-card.valor .val { color: #1d4ed8; font-size: 20pt; }
+    .footer { text-align: center; font-size: 8pt; color: #ccc; border-top: 1px solid #f1f5f9; padding-top: 4mm; }
+    .loja-bar { background: #1e3a5f; color: white; border-radius: 3mm; padding: 4mm 8mm; margin-bottom: 8mm; font-size: 14pt; font-weight: 700; text-align: center; }
   </style>
   </head><body>
   <div class="header">
-    <h1>WMS SEU FULL</h1>
-    <p>Etiqueta de Identificacao de Palete</p>
+    <div class="header-left">
+      <h1>WMS SEU FULL</h1>
+      <p>Etiqueta de Identificacao de Palete</p>
+    </div>
+    <div class="header-right">
+      Impresso em<br/>${new Date().toLocaleDateString('pt-BR')}<br/>${new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}
+    </div>
   </div>
-  <div class="address-box">
-    <div class="label">Endereco</div>
+
+  <div class="address-section">
+    <div class="label">Endereco do Palete</div>
     <div class="value">${id}</div>
   </div>
-  <div class="info-grid">
-    <div class="info-box">
-      <div class="label">SKU / Codigo</div>
-      <div class="value">${cell?.sku || '-'}</div>
+
+  ${cell?.loja ? `<div class="loja-bar">Loja / Cliente: ${cell.loja}</div>` : ''}
+
+  <div class="main-grid">
+    <div class="produto-section">
+      <div class="section-label">Produto</div>
+      <div class="produto-nome">${cell?.nome || 'Sem descricao'}</div>
+      <div class="info-row">
+        <div class="info-chip">
+          <div class="lbl">SKU / Codigo</div>
+          <div class="val">${cell?.sku || '-'}</div>
+        </div>
+        <div class="info-chip">
+          <div class="lbl">Curva ABC</div>
+          <div class="val">${cell?.curva || '-'}</div>
+        </div>
+      </div>
+      ${cell?.obs ? `<div class="info-chip" style="margin-top:3mm"><div class="lbl">Observacao</div><div class="val" style="font-size:11pt">${cell.obs}</div></div>` : ''}
     </div>
-    <div class="info-box">
-      <div class="label">Curva ABC</div>
-      <div class="value">${cell?.curva || '-'}</div>
+    <div class="qr-section">
+      <img src="${qrUrl}" alt="QR Code"/>
+      <p>Escaneie para localizar<br/>no sistema WMS</p>
     </div>
-    ${cell?.loja ? `<div class="info-box" style="grid-column:1/-1"><div class="label">Loja de Origem</div><div class="value">${cell.loja}</div></div>` : ''}
   </div>
-  <div class="produto-box">
-    <div class="label">Produto</div>
-    <div class="value">${cell?.nome || 'Posicao vazia'}</div>
-  </div>
-  <div class="bottom">
-    <div class="qty-box">
-      <div class="label">Quantidade</div>
-      <div class="value">${cell?.qtd || '0'}</div>
+
+  <div class="bottom-grid">
+    <div class="big-card qty">
+      <div class="lbl">Quantidade</div>
+      <div class="val">${cell?.qtd || '0'}</div>
     </div>
-    <div class="qr-area">
-      <img src="${qrUrl}" alt="QR"/>
-      <p>Escaneie para<br/>localizar</p>
+    <div class="big-card valor">
+      <div class="lbl">Valor Total</div>
+      <div class="val">R$ ${valorTotal}</div>
+    </div>
+    <div class="big-card ${cell?.curva==='A'?'curva':cell?.curva==='B'?'curvaB':'curvaC'}">
+      <div class="lbl">Classificacao</div>
+      <div class="val">Curva ${cell?.curva || '-'}</div>
     </div>
   </div>
-  <div class="footer">Impresso em ${new Date().toLocaleDateString('pt-BR')} ${new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}</div>
+
+  <div class="footer">WMS SEU FULL — ${id} — Gerado automaticamente pelo sistema de gestao de armazem</div>
   </body></html>`;
-  const win = window.open('', '_blank', 'width=400,height=600');
+  const win = window.open('', '_blank', 'width=800,height=1000');
   win.document.write(html);
   win.document.close();
   setTimeout(() => win.print(), 800);
