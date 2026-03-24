@@ -15,7 +15,7 @@ const WAREHOUSE = {
 
 const LADOS = ["A","B"];
 const EMPTY = { sku:"", nome:"", qtd:"", valorUnit:"", curva:"", loja:"", obs:"" };
-const EMPTY_AREA = { descricao:"", loja:"", qtd:"", valorUnit:"", obs:"" };
+const EMPTY_AREA = { descricao:"", loja:"", qtd:"", valorUnit:"", obs:"", paletes:"1", dataEntrada:"" };
 const STORAGE_KEY = "wms_several_v3";
 
 function cellId(r,v,l,a){ return `${r}-P${String(v).padStart(2,"0")}${l}-A${a}`; }
@@ -263,6 +263,18 @@ export default function App() {
         .vao-lbl{font-size:9px;font-weight:600;color:#cbd5e1;text-align:center;flex-shrink:0;}
         .areas-row{display:grid;grid-template-columns:3fr 2fr;gap:14px;margin-top:16px;}
         .full-box{background:#f0fdf4;border:2px solid #86efac;border-radius:10px;padding:14px;}
+        .full-dashboard{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px;}
+        .fd-card{background:#fff;border:1.5px solid #86efac;border-radius:8px;padding:10px 12px;text-align:center;}
+        .fd-card.alerta{border-color:#f59e0b;background:#fffbeb;}
+        .fd-card.perigo{border-color:#ef4444;background:#fef2f2;}
+        .fd-label{font-size:10px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px;}
+        .fd-value{font-size:18px;font-weight:800;}
+        .fd-sub{font-size:10px;color:#94a3b8;margin-top:2px;}
+        .coleta-bar{display:flex;gap:8px;margin-bottom:10px;}
+        .coleta-card{flex:1;background:#fff;border:1.5px solid #86efac;border-radius:8px;padding:8px 12px;display:flex;align-items:center;gap:10px;}
+        .coleta-dia{font-size:13px;font-weight:800;color:#15803d;}
+        .coleta-info{font-size:11px;color:#64748b;}
+        .coleta-dias{font-size:20px;font-weight:800;color:#1d4ed8;}
         .full-title{font-size:13px;font-weight:800;color:#15803d;margin-bottom:3px;}
         .full-sub{font-size:11px;color:#4ade80;margin-bottom:10px;}
         .full-grid{display:grid;grid-template-columns:repeat(8,1fr);gap:5px;}
@@ -462,6 +474,78 @@ export default function App() {
               <div className="full-box">
                 <div className="full-title">Full Pronto</div>
                 <div className="full-sub">40 paletes - aguardando despacho</div>
+
+                {/* DASHBOARD FULL */}
+                {(()=>{
+                  const fullItems = fullSlots.map(s=>cells[s]).filter(Boolean).filter(c=>c.loja||c.descricao);
+                  const totalPaletes = fullItems.reduce((s,c)=>s+(parseInt(c.paletes)||1),0);
+                  const totalValor = fullItems.reduce((s,c)=>s+(parseFloat(c.qtd)||0)*(parseFloat(c.valorUnit)||0),0);
+                  const pctPaletes = Math.min(100,(totalPaletes/28)*100);
+                  const pctValor = Math.min(100,(totalValor/1000000)*100);
+                  const hoje = new Date();
+                  const diaSemana = hoje.getDay();
+                  // proxima segunda (1) e sexta (5)
+                  const diasParaSeg = ((1-diaSemana+7)%7)||7;
+                  const diasParaSex = ((5-diaSemana+7)%7)||7;
+                  const proxSeg = new Date(hoje); proxSeg.setDate(hoje.getDate()+diasParaSeg);
+                  const proxSex = new Date(hoje); proxSex.setDate(hoje.getDate()+diasParaSex);
+                  const fmtData = d => d.toLocaleDateString("pt-BR",{day:"2-digit",month:"2-digit"});
+                  const paletesAlerta = totalPaletes>=24;
+                  const valorAlerta = totalValor>=900000;
+                  return(<>
+                    <div className="full-dashboard">
+                      <div className={`fd-card${paletesAlerta?" perigo":""}`}>
+                        <div className="fd-label">Paletes</div>
+                        <div className="fd-value" style={{color:paletesAlerta?"#dc2626":"#15803d"}}>{totalPaletes}<span style={{fontSize:"12px",color:"#94a3b8"}}>/28</span></div>
+                        <div className="fd-sub">{pctPaletes.toFixed(0)}% da carreta</div>
+                        <div style={{height:4,background:"#e2e8f0",borderRadius:2,marginTop:4,overflow:"hidden"}}>
+                          <div style={{height:"100%",width:pctPaletes+"%",background:paletesAlerta?"#ef4444":"#16a34a",borderRadius:2}}></div>
+                        </div>
+                      </div>
+                      <div className={`fd-card${valorAlerta?" alerta":""}`}>
+                        <div className="fd-label">Valor Total</div>
+                        <div className="fd-value" style={{fontSize:"13px",color:valorAlerta?"#d97706":"#15803d"}}>R$ {totalValor.toLocaleString("pt-BR",{minimumFractionDigits:2})}</div>
+                        <div className="fd-sub">{pctValor.toFixed(0)}% do limite</div>
+                        <div style={{height:4,background:"#e2e8f0",borderRadius:2,marginTop:4,overflow:"hidden"}}>
+                          <div style={{height:"100%",width:pctValor+"%",background:valorAlerta?"#f59e0b":"#16a34a",borderRadius:2}}></div>
+                        </div>
+                      </div>
+                      <div className="fd-card">
+                        <div className="fd-label">SKUs no Full</div>
+                        <div className="fd-value" style={{color:"#1d4ed8"}}>{fullItems.length}</div>
+                        <div className="fd-sub">posicoes ocupadas</div>
+                      </div>
+                      <div className="fd-card">
+                        <div className="fd-label">Limite Restante</div>
+                        <div className="fd-value" style={{fontSize:"13px",color:"#15803d"}}>R$ {Math.max(0,1000000-totalValor).toLocaleString("pt-BR",{minimumFractionDigits:0})}</div>
+                        <div className="fd-sub">ate R$ 1.000.000</div>
+                      </div>
+                    </div>
+                    <div className="coleta-bar">
+                      <div className="coleta-card">
+                        <div style={{textAlign:"center"}}>
+                          <div className="coleta-dias">{diasParaSeg}</div>
+                          <div style={{fontSize:"9px",color:"#94a3b8"}}>dias</div>
+                        </div>
+                        <div>
+                          <div className="coleta-dia">Segunda-feira</div>
+                          <div className="coleta-info">{fmtData(proxSeg)} · Coleta programada</div>
+                        </div>
+                      </div>
+                      <div className="coleta-card">
+                        <div style={{textAlign:"center"}}>
+                          <div className="coleta-dias">{diasParaSex}</div>
+                          <div style={{fontSize:"9px",color:"#94a3b8"}}>dias</div>
+                        </div>
+                        <div>
+                          <div className="coleta-dia">Sexta-feira</div>
+                          <div className="coleta-info">{fmtData(proxSex)} · Coleta programada</div>
+                        </div>
+                      </div>
+                    </div>
+                  </>);
+                })()}
+
                 <div className="full-grid">
                   {fullSlots.map(slot=>{
                     const c=cells[slot], has=c&&(c.descricao||c.loja);
@@ -471,7 +555,7 @@ export default function App() {
                         title={has?`${c.loja||""} - ${c.descricao||""}`:slot}>
                         <span className="palet-num">{slot.replace("FULL-","")}</span>
                         {has
-                          ?<><div className="palet-dot"></div><div className="palet-loja">{c.loja||"-"}</div><div className="palet-desc">{c.descricao||""}</div></>
+                          ?<><div className="palet-dot"></div><div className="palet-loja">{c.loja||"-"}</div><div className="palet-desc">{c.paletes||1}pal</div></>
                           :<span style={{fontSize:"18px",color:"#86efac"}}>+</span>
                         }
                       </div>
@@ -605,9 +689,13 @@ export default function App() {
             <div className="field"><label>Descricao / Produto</label><input value={areaForm.descricao} onChange={e=>setAreaForm(f=>({...f,descricao:e.target.value}))} placeholder="O que esta aqui..."/></div>
             <div className="field"><label>Loja / Cliente</label><input value={areaForm.loja} onChange={e=>setAreaForm(f=>({...f,loja:e.target.value}))} placeholder="Nome da loja ou cliente"/></div>
             <div className="frow">
-              <div className="field"><label>Quantidade</label><input type="number" value={areaForm.qtd} onChange={e=>setAreaForm(f=>({...f,qtd:e.target.value}))} placeholder="0"/></div>
+              <div className="field"><label>Quantidade de Itens</label><input type="number" value={areaForm.qtd} onChange={e=>setAreaForm(f=>({...f,qtd:e.target.value}))} placeholder="0"/></div>
               <div className="field"><label>Valor Unitario (R$)</label><input type="number" value={areaForm.valorUnit} onChange={e=>setAreaForm(f=>({...f,valorUnit:e.target.value}))} placeholder="0,00"/></div>
             </div>
+            {areaModal?.tipo==="full"&&<div className="frow">
+              <div className="field"><label>Numero de Paletes</label><input type="number" value={areaForm.paletes} onChange={e=>setAreaForm(f=>({...f,paletes:e.target.value}))} placeholder="1" min="1"/></div>
+              <div className="field"><label>Data de Entrada</label><input type="date" value={areaForm.dataEntrada} onChange={e=>setAreaForm(f=>({...f,dataEntrada:e.target.value}))}/></div>
+            </div>}
             <div className="field"><label>Observacao</label><input value={areaForm.obs} onChange={e=>setAreaForm(f=>({...f,obs:e.target.value}))} placeholder="Pedido, data, notas..."/></div>
             {areaForm.qtd&&areaForm.valorUnit&&<div className="vt-box">Valor total: R$ {((parseFloat(areaForm.qtd)||0)*(parseFloat(areaForm.valorUnit)||0)).toLocaleString("pt-BR",{minimumFractionDigits:2})}</div>}
           </div>
