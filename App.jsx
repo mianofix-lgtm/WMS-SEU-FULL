@@ -1,5 +1,27 @@
 import { useState, useMemo, useEffect, useCallback } from "react";
 
+// ─── USUARIOS E PERMISSOES ────────────────────────────────────────────────────
+const USERS = {
+  daniel:     { senha: "ironman6in30#",  nome: "Daniel",    role: "admin"    },
+  financeiro: { senha: "mianofix123#",   nome: "Financeiro", role: "gerente"  },
+  comercial:  { senha: "123456#",        nome: "Comercial",  role: "gerente"  },
+  logistica1: { senha: "1234#",          nome: "Mikaela",    role: "operador" },
+  logistica2: { senha: "12345#",         nome: "Oliver",     role: "operador" },
+};
+
+const PERMS = {
+  admin:    { verValores: true,  editarEstoque: true,  apagar: true,  justificar: false },
+  gerente:  { verValores: true,  editarEstoque: false, apagar: false, justificar: false },
+  operador: { verValores: false, editarEstoque: true,  apagar: true,  justificar: true  },
+};
+
+function getPerm(role){ return PERMS[role] || PERMS.operador; }
+const SESSION_KEY = "wms_session";
+function loadSession(){ try { const s=localStorage.getItem(SESSION_KEY); return s?JSON.parse(s):null; } catch(e){ return null; } }
+function saveSession(u){ try { localStorage.setItem(SESSION_KEY,JSON.stringify(u)); } catch(e){} }
+function clearSession(){ try { localStorage.removeItem(SESSION_KEY); } catch(e){} }
+
+
 const CURVA_COLORS = { A: "#dc2626", B: "#d97706", C: "#16a34a", "": "#94a3b8" };
 
 // inverter: true = A1 aparece em cima (lado do corredor acima), A4 embaixo
@@ -46,7 +68,7 @@ async function cloudSave(cells){
 function printLabel(id, cell, ruaTipo) {
   const qrData = encodeURIComponent(id);
   const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${qrData}`;
-  const valorTotal = ((parseFloat(cell?.qtd)||0)*(parseFloat(cell?.valorUnit)||0)).toLocaleString('pt-BR',{minimumFractionDigits:2});
+  // valor omitido da etiqueta por seguranca
   const html = `<!DOCTYPE html><html><head><meta charset="UTF-8">
   <title>Etiqueta ${id}</title>
   <style>
@@ -130,9 +152,9 @@ function printLabel(id, cell, ruaTipo) {
       <div class="lbl">Quantidade</div>
       <div class="val">${cell?.qtd || '0'}</div>
     </div>
-    <div class="big-card valor">
-      <div class="lbl">Valor Total</div>
-      <div class="val">R$ ${valorTotal}</div>
+    <div class="big-card" style="background:#f8fafc;border:2px solid #e2e8f0">
+      <div class="lbl">Unidade</div>
+      <div class="val" style="font-size:14pt;color:#1e293b">${cell?.obs||"---"}</div>
     </div>
     <div class="big-card ${cell?.curva==='A'?'curva':cell?.curva==='B'?'curvaB':'curvaC'}">
       <div class="lbl">Classificacao</div>
@@ -152,6 +174,10 @@ function printLabel(id, cell, ruaTipo) {
 function isAcesso(vaos, vao, andar){ return vaos === 10 && vao === 10 && andar <= 2; }
 
 export default function App() {
+  const [session,  setSession]  = useState(loadSession);
+  const [loginUser,setLoginUser]= useState("");
+  const [loginPass,setLoginPass]= useState("");
+  const [loginErr, setLoginErr] = useState("");
   const [cells,    setCells]    = useState(loadLocal);
   const [sel,      setSel]      = useState(null);
   const [form,     setForm]     = useState(EMPTY);
@@ -164,6 +190,19 @@ export default function App() {
   const [toast,    setToast]    = useState(null);
   const [cloud,    setCloud]    = useState("connecting");
   const [lastSave, setLastSave] = useState(null);
+  const [confirmModal, setConfirmModal] = useState(null); // {id, tipo, justificativa}
+  const [justText, setJustText] = useState("");
+  const [showFinanceiro, setShowFinanceiro] = useState(false);
+
+  const perm = session ? getPerm(session.role) : null;
+
+  function doLogin(){
+    const u = USERS[loginUser.toLowerCase().trim()];
+    if(!u || u.senha !== loginPass){ setLoginErr("Usuario ou senha incorretos."); return; }
+    const s = { usuario: loginUser.toLowerCase().trim(), nome: u.nome, role: u.role };
+    setSession(s); saveSession(s); setLoginErr("");
+  }
+  function doLogout(){ clearSession(); setSession(null); setLoginUser(""); setLoginPass(""); }
 
   function showToast(msg,type="ok"){ setToast({msg,type}); setTimeout(()=>setToast(null),3000); }
 
@@ -182,13 +221,78 @@ export default function App() {
   },[]);
 
   function openCell(id){ setSel(id); setForm(cells[id]?{...cells[id]}:{...EMPTY}); }
-  function saveCell(){ if(!sel) return; persist({...cells,[sel]:{...form}}); setSel(null); showToast("Salvo na nuvem!"); }
-  function clearCell(){ if(!sel) return; const n={...cells}; delete n[sel]; persist(n); setSel(null); showToast("Posicao limpa.","warn"); }
+  function saveCell(){
+    if(!perm?.editarEstoque){ showToast("Sem permissao para editar estoque.","warn"); return; }
+    if(!sel) return; persist({...cells,[sel]:{...form}}); setSel(null); showToast("Salvo na nuvem!");
+  }
+  function requestClear(id, tipo){
+    if(!perm?.apagar){ showToast("Sem permissao para apagar.","warn"); return; }
+    if(perm.justificar){
+      setConfirmModal({id, tipo}); setJustText("");
+    } else {
+      executeClear(id, tipo, "");
+    }
+  }
+  function executeClear(id, tipo, justificativa){
+    const n={...cells};
+    // Log da acao
+    const log = { acao:"apagou", id, usuario: session?.nome, role: session?.role, justificativa, ts: new Date().toISOString() };
+    console.log("WMS LOG:", JSON.stringify(log));
+    delete n[id];
+    persist(n);
+    if(tipo==="cell"){ setSel(null); } else { setAreaModal(null); }
+    setConfirmModal(null);
+    showToast("Posicao limpa.","warn");
+  }
+  function clearCell(){ requestClear(sel, "cell"); }
   function openArea(slot,tipo){ setAreaModal({slot,tipo}); setAreaForm(cells[slot]?{...cells[slot]}:{...EMPTY_AREA}); }
-  function saveArea(){ if(!areaModal) return; persist({...cells,[areaModal.slot]:{...areaForm,_area:areaModal.tipo}}); setAreaModal(null); showToast("Salvo na nuvem!"); }
-  function clearArea(){ if(!areaModal) return; const n={...cells}; delete n[areaModal.slot]; persist(n); setAreaModal(null); showToast("Limpo.","warn"); }
+  function saveArea(){
+    if(!perm?.editarEstoque){ showToast("Sem permissao para editar estoque.","warn"); return; }
+    if(!areaModal) return;
+    persist({...cells,[areaModal.slot]:{...areaForm,_area:areaModal.tipo}});
+    setAreaModal(null); showToast("Salvo na nuvem!");
+  }
+  function clearArea(){ requestClear(areaModal?.slot, "area"); }
 
   const fullSlots = Array.from({length:40},(_,i)=>`FULL-${String(i+1).padStart(2,"0")}`);
+  const HIST_KEY = "wms_coleta_hist";
+  function loadHist(){ try { const r=localStorage.getItem(HIST_KEY); return r?JSON.parse(r):[]; } catch(e){ return []; } }
+  function saveHist(h){ try { localStorage.setItem(HIST_KEY,JSON.stringify(h)); } catch(e){} }
+  const [coletaHist, setColetaHist] = useState(loadHist);
+  const [showHist, setShowHist] = useState(false);
+  const [confirmColeta, setConfirmColeta] = useState(false);
+  const [coletaDate, setColetaDate] = useState("");
+
+  function getColetaDate(c){ return c?.dataEntrada||""; }
+  function fmtDate(s){ if(!s) return "Sem data"; try{ const d=new Date(s+"T12:00:00"); return d.toLocaleDateString("pt-BR"); } catch(e){ return s; } }
+
+  function doConfirmarColeta(dataColeta){
+    // Pega apenas os paletes da data selecionada
+    const itensColeta = fullSlots.map(s=>({slot:s,c:cells[s]}))
+      .filter(({c})=>c&&(c.loja||c.descricao)&&getColetaDate(c)===dataColeta);
+    if(itensColeta.length===0){ showToast("Nenhum palete com essa data.","warn"); return; }
+    const totalPal = itensColeta.reduce((s,{c})=>s+(parseInt(c.paletes)||1),0);
+    const totalVal = itensColeta.reduce((s,{c})=>s+(parseFloat(c.qtd)||0)*(parseFloat(c.valorUnit)||0),0);
+    // Registra no historico
+    const registro = {
+      id: Date.now(),
+      dataColeta,
+      dataConfirmacao: new Date().toISOString(),
+      confirmedBy: session?.nome,
+      totalPaletes: totalPal,
+      totalValor: totalVal,
+      itens: itensColeta.map(({slot,c})=>({slot,...c}))
+    };
+    const newHist = [registro, ...coletaHist];
+    setColetaHist(newHist); saveHist(newHist);
+    // Remove os paletes coletados do Full
+    const newCells = {...cells};
+    itensColeta.forEach(({slot})=>{ delete newCells[slot]; });
+    persist(newCells);
+    setConfirmColeta(false); setColetaDate("");
+    showToast(`Coleta de ${fmtDate(dataColeta)} confirmada! ${totalPal} paletes arquivados.`);
+  }
+
   const flexSlots = Array.from({length:60},(_,i)=>`FLEX-${String(i+1).padStart(2,"0")}`);
 
   function exportCSV(){
@@ -244,6 +348,37 @@ export default function App() {
     saving:{label:"Salvando...",color:"#60a5fa"},
     error:{label:"Salvo localmente",color:"#fb923c"},
   }[cloud];
+
+  // LOGIN SCREEN
+  if(!session) return (
+    <div style={{fontFamily:"'Segoe UI',system-ui,sans-serif",background:"#0f172a",minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center"}}>
+      <div style={{background:"#fff",borderRadius:16,padding:"40px 48px",width:400,maxWidth:"95vw",boxShadow:"0 24px 64px #0005"}}>
+        <div style={{textAlign:"center",marginBottom:32}}>
+          <div style={{fontSize:28,fontWeight:900,color:"#1e3a5f",letterSpacing:1}}>WMS SEU FULL</div>
+          <div style={{fontSize:13,color:"#94a3b8",marginTop:6}}>Sistema de Gestao de Armazem</div>
+        </div>
+        <div style={{marginBottom:16}}>
+          <label style={{display:"block",fontSize:12,fontWeight:700,color:"#475569",textTransform:"uppercase",letterSpacing:1,marginBottom:6}}>Usuario</label>
+          <input value={loginUser} onChange={e=>setLoginUser(e.target.value)}
+            onKeyDown={e=>e.key==="Enter"&&doLogin()}
+            placeholder="seu usuario" autoFocus
+            style={{width:"100%",padding:"12px 14px",border:"2px solid #e2e8f0",borderRadius:8,fontSize:15,outline:"none",fontFamily:"inherit"}}/>
+        </div>
+        <div style={{marginBottom:24}}>
+          <label style={{display:"block",fontSize:12,fontWeight:700,color:"#475569",textTransform:"uppercase",letterSpacing:1,marginBottom:6}}>Senha</label>
+          <input type="password" value={loginPass} onChange={e=>setLoginPass(e.target.value)}
+            onKeyDown={e=>e.key==="Enter"&&doLogin()}
+            placeholder="sua senha"
+            style={{width:"100%",padding:"12px 14px",border:"2px solid #e2e8f0",borderRadius:8,fontSize:15,outline:"none",fontFamily:"inherit"}}/>
+        </div>
+        {loginErr&&<div style={{background:"#fef2f2",border:"1.5px solid #fca5a5",borderRadius:8,padding:"10px 14px",fontSize:13,color:"#dc2626",fontWeight:600,marginBottom:16}}>{loginErr}</div>}
+        <button onClick={doLogin} style={{width:"100%",background:"#1e3a5f",color:"#fff",border:"none",borderRadius:8,padding:"13px",fontSize:15,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
+          Entrar
+        </button>
+        <div style={{textAlign:"center",fontSize:11,color:"#cbd5e1",marginTop:20}}>WMS SEU FULL v2.0</div>
+      </div>
+    </div>
+  );
 
   return (
     <div style={{fontFamily:"'Segoe UI',system-ui,sans-serif",background:"#f1f5f9",minHeight:"100vh",color:"#1e293b"}}>
@@ -374,23 +509,31 @@ export default function App() {
         <div><div className="hdr-logo">WMS SEU FULL</div><div className="hdr-sub">Sistema de Gestao de Armazem</div></div>
         <div className="hdr-right">
           <div className="cloud-badge" style={{color:cloudInfo.color}}>{cloudInfo.label}</div>
+          <div style={{background:"#ffffff22",padding:"5px 12px",borderRadius:20,fontSize:12,color:"#bfdbfe"}}>
+            {session?.nome} · <span style={{opacity:.7,textTransform:"capitalize"}}>{session?.role}</span>
+          </div>
           <nav className="nav">
             {[["mapa","Mapa"],["inventario","Inventario"],["financeiro","Financeiro"]].map(([v,l])=>(
               <button key={v} className={`nb${view===v?" on":""}`} onClick={()=>setView(v)}>{l}</button>
             ))}
           </nav>
+          <button onClick={doLogout} style={{padding:"7px 14px",fontFamily:"inherit",fontSize:12,fontWeight:600,border:"1.5px solid #ffffff44",borderRadius:6,background:"transparent",color:"#fca5a5",cursor:"pointer"}}>Sair</button>
         </div>
       </div>
 
       <div className="toolbar">
-        <span>Firebase Google Cloud - Ruas 3 e 5: A1 proximo ao corredor</span>
-        <button className="tbtn tbtn-csv" onClick={exportCSV} style={{marginLeft:"auto"}}>Exportar Excel (.csv)</button>
+        <span>Firebase Google Cloud · Logado como {session?.nome}</span>
+        {perm?.editarEstoque&&<button className="tbtn tbtn-csv" onClick={exportCSV} style={{marginLeft:"auto"}}>Exportar Excel (.csv)</button>}
+        {!perm?.editarEstoque&&<span style={{marginLeft:"auto",fontSize:12,color:"#60a5fa",opacity:.7}}>Modo visualizacao</span>}
       </div>
 
       <div className="kbar">
         <div className="kpi"><div className="kpi-l">SKUs alocados</div><div className="kpi-v" style={{color:"#1d4ed8"}}>{totais.skus}</div></div>
         <div className="kpi"><div className="kpi-l">Total de itens</div><div className="kpi-v">{totais.ti.toLocaleString("pt-BR")}</div></div>
-        <div className="kpi"><div className="kpi-l">Valor em estoque</div><div className="kpi-v" style={{color:"#15803d"}}>R$ {totais.vt.toLocaleString("pt-BR",{minimumFractionDigits:2})}</div></div>
+        {perm?.verValores
+          ?<div className="kpi"><div className="kpi-l">Valor em estoque</div><div className="kpi-v" style={{color:"#15803d"}}>R$ {totais.vt.toLocaleString("pt-BR",{minimumFractionDigits:2})}</div></div>
+          :<div className="kpi"><div className="kpi-l">Valor em estoque</div><div className="kpi-v" style={{color:"#94a3b8",fontSize:14}}>🔒 Restrito</div></div>
+        }
         <div className="kpi"><div className="kpi-l">Curva A</div><div className="kpi-v" style={{color:"#dc2626"}}>{curvaCount.A} pos</div></div>
         <div className="kpi"><div className="kpi-l">Curva B</div><div className="kpi-v" style={{color:"#d97706"}}>{curvaCount.B} pos</div></div>
         <div className="kpi"><div className="kpi-l">Curva C</div><div className="kpi-v" style={{color:"#16a34a"}}>{curvaCount.C} pos</div></div>
@@ -501,96 +644,127 @@ export default function App() {
 
               {/* FULL PRONTO - direita */}
               <div className="full-box">
-                <div className="full-title">Full Pronto</div>
-                <div className="full-sub">40 paletes - aguardando despacho</div>
-
-                {/* DASHBOARD FULL */}
-                {(()=>{
-                  const fullItems = fullSlots.map(s=>cells[s]).filter(Boolean).filter(c=>c.loja||c.descricao);
-                  const totalPaletes = fullItems.reduce((s,c)=>s+(parseInt(c.paletes)||1),0);
-                  const totalValor = fullItems.reduce((s,c)=>s+(parseFloat(c.qtd)||0)*(parseFloat(c.valorUnit)||0),0);
-                  const pctPaletes = Math.min(100,(totalPaletes/28)*100);
-                  const pctValor = Math.min(100,(totalValor/1000000)*100);
-                  const hoje = new Date();
-                  const diaSemana = hoje.getDay();
-                  // proxima segunda (1) e sexta (5)
-                  const diasParaSeg = ((1-diaSemana+7)%7)||7;
-                  const diasParaSex = ((5-diaSemana+7)%7)||7;
-                  const proxSeg = new Date(hoje); proxSeg.setDate(hoje.getDate()+diasParaSeg);
-                  const proxSex = new Date(hoje); proxSex.setDate(hoje.getDate()+diasParaSex);
-                  const fmtData = d => d.toLocaleDateString("pt-BR",{day:"2-digit",month:"2-digit"});
-                  const paletesAlerta = totalPaletes>=24;
-                  const valorAlerta = totalValor>=900000;
-                  return(<>
-                    <div className="full-dashboard">
-                      <div className={`fd-card${paletesAlerta?" perigo":""}`}>
-                        <div className="fd-label">Paletes</div>
-                        <div className="fd-value" style={{color:paletesAlerta?"#dc2626":"#15803d"}}>{totalPaletes}<span style={{fontSize:"12px",color:"#94a3b8"}}>/28</span></div>
-                        <div className="fd-sub">{pctPaletes.toFixed(0)}% da carreta</div>
-                        <div style={{height:4,background:"#e2e8f0",borderRadius:2,marginTop:4,overflow:"hidden"}}>
-                          <div style={{height:"100%",width:pctPaletes+"%",background:paletesAlerta?"#ef4444":"#16a34a",borderRadius:2}}></div>
-                        </div>
-                      </div>
-                      <div className={`fd-card${valorAlerta?" alerta":""}`}>
-                        <div className="fd-label">Valor Total</div>
-                        <div className="fd-value" style={{fontSize:"13px",color:valorAlerta?"#d97706":"#15803d"}}>R$ {totalValor.toLocaleString("pt-BR",{minimumFractionDigits:2})}</div>
-                        <div className="fd-sub">{pctValor.toFixed(0)}% do limite</div>
-                        <div style={{height:4,background:"#e2e8f0",borderRadius:2,marginTop:4,overflow:"hidden"}}>
-                          <div style={{height:"100%",width:pctValor+"%",background:valorAlerta?"#f59e0b":"#16a34a",borderRadius:2}}></div>
-                        </div>
-                      </div>
-                      <div className="fd-card">
-                        <div className="fd-label">SKUs no Full</div>
-                        <div className="fd-value" style={{color:"#1d4ed8"}}>{fullItems.length}</div>
-                        <div className="fd-sub">posicoes ocupadas</div>
-                      </div>
-                      <div className="fd-card">
-                        <div className="fd-label">Limite Restante</div>
-                        <div className="fd-value" style={{fontSize:"13px",color:"#15803d"}}>R$ {Math.max(0,1000000-totalValor).toLocaleString("pt-BR",{minimumFractionDigits:0})}</div>
-                        <div className="fd-sub">ate R$ 1.000.000</div>
-                      </div>
-                    </div>
-                    <div className="coleta-bar">
-                      <div className="coleta-card">
-                        <div style={{textAlign:"center"}}>
-                          <div className="coleta-dias">{diasParaSeg}</div>
-                          <div style={{fontSize:"9px",color:"#94a3b8"}}>dias</div>
-                        </div>
-                        <div>
-                          <div className="coleta-dia">Segunda-feira</div>
-                          <div className="coleta-info">{fmtData(proxSeg)} · Coleta programada</div>
-                        </div>
-                      </div>
-                      <div className="coleta-card">
-                        <div style={{textAlign:"center"}}>
-                          <div className="coleta-dias">{diasParaSex}</div>
-                          <div style={{fontSize:"9px",color:"#94a3b8"}}>dias</div>
-                        </div>
-                        <div>
-                          <div className="coleta-dia">Sexta-feira</div>
-                          <div className="coleta-info">{fmtData(proxSex)} · Coleta programada</div>
-                        </div>
-                      </div>
-                    </div>
-                  </>);
-                })()}
-
-                <div className="full-grid">
-                  {fullSlots.map(slot=>{
-                    const c=cells[slot], has=c&&(c.descricao||c.loja);
-                    return(
-                      <div key={slot} className={`palet ${has?"filled":"empty"}`}
-                        onClick={()=>openArea(slot,"full")}
-                        title={has?`${c.loja||""} - ${c.descricao||""}`:slot}>
-                        <span className="palet-num">{slot.replace("FULL-","")}</span>
-                        {has
-                          ?<><div className="palet-dot"></div><div className="palet-loja">{c.loja||"-"}</div><div className="palet-desc">{c.paletes||1}pal</div></>
-                          :<span style={{fontSize:"18px",color:"#86efac"}}>+</span>
-                        }
-                      </div>
-                    );
-                  })}
+                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:3}}>
+                  <div className="full-title">Full Pronto</div>
+                  <div style={{display:"flex",gap:8}}>
+                    <button onClick={()=>setShowHist(!showHist)} style={{padding:"5px 12px",fontFamily:"inherit",fontSize:11,fontWeight:700,border:"1.5px solid #86efac",borderRadius:6,background:"#f0fdf4",color:"#15803d",cursor:"pointer"}}>
+                      {showHist?"Ver Paletes":"Historico"}
+                    </button>
+                    {session?.role==="admin"&&<button onClick={()=>setConfirmColeta(true)} style={{padding:"5px 12px",fontFamily:"inherit",fontSize:11,fontWeight:700,border:"1.5px solid #16a34a",borderRadius:6,background:"#15803d",color:"#fff",cursor:"pointer"}}>
+                      Confirmar Coleta
+                    </button>}
+                  </div>
                 </div>
+                <div className="full-sub">40 posicoes · cada coleta e independente · max 28 paletes por viagem</div>
+
+                {showHist ? (
+                  <div>
+                    <div style={{fontWeight:700,fontSize:13,color:"#15803d",marginBottom:10}}>Historico de Coletas Realizadas</div>
+                    {coletaHist.length===0
+                      ?<div style={{textAlign:"center",padding:40,color:"#94a3b8",fontSize:13}}>Nenhuma coleta confirmada ainda.</div>
+                      :coletaHist.map(h=>(
+                        <div key={h.id} style={{background:"#fff",border:"1.5px solid #e2e8f0",borderRadius:8,padding:"12px 16px",marginBottom:8}}>
+                          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
+                            <div>
+                              <div style={{fontWeight:800,fontSize:14,color:"#1e293b"}}>Coleta de {fmtDate(h.dataColeta)}</div>
+                              <div style={{fontSize:11,color:"#94a3b8",marginTop:2}}>Confirmado por {h.confirmedBy} em {new Date(h.dataConfirmacao).toLocaleString("pt-BR")}</div>
+                            </div>
+                            <div style={{textAlign:"right"}}>
+                              <div style={{fontWeight:800,fontSize:15,color:"#15803d"}}>{h.totalPaletes} paletes</div>
+                              {perm?.verValores&&<div style={{fontSize:12,color:"#64748b"}}>R$ {h.totalValor.toLocaleString("pt-BR",{minimumFractionDigits:2})}</div>}
+                            </div>
+                          </div>
+                          <div style={{display:"flex",flexWrap:"wrap",gap:4}}>
+                            {h.itens.map((item,i)=>(
+                              <div key={i} style={{background:"#f0fdf4",border:"1px solid #86efac",borderRadius:4,padding:"3px 8px",fontSize:11,color:"#15803d",fontWeight:600}}>
+                                {item.loja||item.descricao} · {item.paletes||1}pal
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ))
+                    }
+                  </div>
+                ) : (
+                  <>
+                  {/* DASHBOARD POR DATA DE COLETA */}
+                  {(()=>{
+                    const fullItems = fullSlots.map(s=>cells[s]).filter(Boolean).filter(c=>c.loja||c.descricao);
+                    // Agrupa por data
+                    const porData = {};
+                    fullItems.forEach(c=>{
+                      const d = getColetaDate(c)||"sem-data";
+                      if(!porData[d]) porData[d]={paletes:0,valor:0,itens:0};
+                      porData[d].paletes += parseInt(c.paletes)||1;
+                      porData[d].valor += (parseFloat(c.qtd)||0)*(parseFloat(c.valorUnit)||0);
+                      porData[d].itens++;
+                    });
+                    const datas = Object.keys(porData).sort();
+                    const hoje = new Date();
+                    const diaSemana = hoje.getDay();
+                    const diasParaSeg = ((1-diaSemana+7)%7)||7;
+                    const diasParaSex = ((5-diaSemana+7)%7)||7;
+                    const proxSeg = new Date(hoje); proxSeg.setDate(hoje.getDate()+diasParaSeg);
+                    const proxSex = new Date(hoje); proxSex.setDate(hoje.getDate()+diasParaSex);
+                    const fmtData = d => d.toLocaleDateString("pt-BR",{day:"2-digit",month:"2-digit"});
+                    return(<>
+                      {datas.length===0&&<div style={{textAlign:"center",padding:20,color:"#94a3b8",fontSize:13}}>Nenhum palete cadastrado. Clique em + para adicionar.</div>}
+                      {datas.map(data=>{
+                        const g = porData[data];
+                        const pct = Math.min(100,(g.paletes/28)*100);
+                        const alerta = g.paletes>=24;
+                        const perigo = g.paletes>28;
+                        return(
+                          <div key={data} style={{background:"#fff",border:`2px solid ${perigo?"#ef4444":alerta?"#f59e0b":"#86efac"}`,borderRadius:8,padding:"10px 14px",marginBottom:8}}>
+                            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+                              <div style={{fontWeight:800,fontSize:13,color:"#1e293b"}}>
+                                Coleta: {data==="sem-data"?"Sem data definida":fmtDate(data)}
+                                {perigo&&<span style={{marginLeft:8,background:"#fef2f2",color:"#dc2626",fontSize:10,fontWeight:700,padding:"2px 6px",borderRadius:4}}>ACIMA DO LIMITE</span>}
+                                {alerta&&!perigo&&<span style={{marginLeft:8,background:"#fffbeb",color:"#b45309",fontSize:10,fontWeight:700,padding:"2px 6px",borderRadius:4}}>ATENCAO</span>}
+                              </div>
+                              <div style={{display:"flex",gap:12,fontSize:12}}>
+                                <span style={{fontWeight:800,color:perigo?"#dc2626":"#15803d"}}>{g.paletes}/28 paletes</span>
+                                {perm?.verValores&&<span style={{color:"#64748b"}}>R$ {g.valor.toLocaleString("pt-BR",{minimumFractionDigits:2})}</span>}
+                                <span style={{color:"#94a3b8"}}>{g.itens} posicoes</span>
+                              </div>
+                            </div>
+                            <div style={{height:6,background:"#e2e8f0",borderRadius:3,overflow:"hidden"}}>
+                              <div style={{height:"100%",width:pct+"%",background:perigo?"#ef4444":alerta?"#f59e0b":"#16a34a",borderRadius:3,transition:"width .5s"}}></div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                      <div className="coleta-bar">
+                        <div className="coleta-card">
+                          <div style={{textAlign:"center"}}><div className="coleta-dias">{diasParaSeg}</div><div style={{fontSize:"9px",color:"#94a3b8"}}>dias</div></div>
+                          <div><div className="coleta-dia">Segunda-feira</div><div className="coleta-info">{fmtData(proxSeg)} · Coleta programada</div></div>
+                        </div>
+                        <div className="coleta-card">
+                          <div style={{textAlign:"center"}}><div className="coleta-dias">{diasParaSex}</div><div style={{fontSize:"9px",color:"#94a3b8"}}>dias</div></div>
+                          <div><div className="coleta-dia">Sexta-feira</div><div className="coleta-info">{fmtData(proxSex)} · Coleta programada</div></div>
+                        </div>
+                      </div>
+                    </>);
+                  })()}
+
+                  <div className="full-grid">
+                    {fullSlots.map(slot=>{
+                      const c=cells[slot], has=c&&(c.descricao||c.loja);
+                      return(
+                        <div key={slot} className={`palet ${has?"filled":"empty"}`}
+                          onClick={()=>openArea(slot,"full")}
+                          title={has?`${c.loja||""} - ${c.descricao||""}`:slot}>
+                          <span className="palet-num">{slot.replace("FULL-","")}</span>
+                          {has
+                            ?<><div className="palet-dot"></div><div className="palet-loja">{c.loja||"-"}</div><div className="palet-desc">{fmtDate(getColetaDate(c))||`${c.paletes||1}pal`}</div></>
+                            :<span style={{fontSize:"18px",color:"#86efac"}}>+</span>
+                          }
+                        </div>
+                      );
+                    })}
+                  </div>
+                  </>
+                )}
               </div>
             </div>
           </div>
@@ -647,6 +821,13 @@ export default function App() {
         </>}
 
         {view==="financeiro"&&<>
+          {!perm?.verValores
+            ?<div style={{textAlign:"center",padding:"60px 40px",background:"#fff",borderRadius:12,border:"2px solid #e2e8f0"}}>
+                <div style={{fontSize:48,marginBottom:16}}>🔒</div>
+                <div style={{fontSize:18,fontWeight:700,color:"#1e3a5f",marginBottom:8}}>Acesso Restrito</div>
+                <div style={{fontSize:14,color:"#94a3b8"}}>O Painel Financeiro esta disponivel apenas para usuarios com permissao de visualizar valores.</div>
+              </div>
+            :<>
           <div className="sec-title">Painel Financeiro do Estoque</div>
           <div className="fin-grid">
             <div className="fin-card"><div className="fin-card-title">Valor Total em Estoque</div><div className="fin-card-value" style={{color:"#15803d"}}>R$ {totais.vt.toLocaleString("pt-BR",{minimumFractionDigits:2})}</div></div>
@@ -675,6 +856,7 @@ export default function App() {
           <div style={{background:"#fefce8",border:"2px solid #fde047",borderRadius:"10px",padding:"18px 22px",fontSize:"14px",color:"#854d0e",lineHeight:1.8,fontWeight:600}}>
             Regra de Ouro: Curva A sempre nos Andares 1 e 2. Andares 3 e 4 para Curva C.
           </div>
+          </>}
         </>}
       </div>
 
@@ -695,7 +877,11 @@ export default function App() {
               <div className="field"><label>Quantidade</label><input type="number" value={form.qtd} onChange={e=>setForm(f=>({...f,qtd:e.target.value}))} placeholder="0"/></div>
               <div className="field"><label>Valor Unitario (R$)</label><input type="number" value={form.valorUnit} onChange={e=>setForm(f=>({...f,valorUnit:e.target.value}))} placeholder="0,00"/></div>
             </div>
-            {selRuaObj?.tipo==="seufull"&&<div className="field"><label>Loja de Origem</label><input value={form.loja} onChange={e=>setForm(f=>({...f,loja:e.target.value}))} placeholder="Nome da loja cliente"/></div>}
+            <div className="field">
+              <label>Loja / Conta</label>
+              <input value={form.loja} onChange={e=>setForm(f=>({...f,loja:e.target.value}))}
+                placeholder={selRuaObj?.tipo==="seufull"?"Nome da loja cliente (Seu Full)":"Ex: Mianofix, Iscali, PocianaX, Gama..."}/>
+            </div>
             <div className="field"><label>Observacao</label><input value={form.obs} onChange={e=>setForm(f=>({...f,obs:e.target.value}))} placeholder="Notas..."/></div>
             {form.qtd&&form.valorUnit&&<div className="vt-box">Valor total: R$ {((parseFloat(form.qtd)||0)*(parseFloat(form.valorUnit)||0)).toLocaleString("pt-BR",{minimumFractionDigits:2})}</div>}
           </div>
@@ -732,6 +918,77 @@ export default function App() {
             <button className="btn btn-danger" onClick={clearArea}>Limpar</button>
             <button className="btn btn-ghost" onClick={()=>setAreaModal(null)}>Cancelar</button>
             <button className={`btn ${areaModal.tipo==="full"?"btn-success":"btn-primary"}`} onClick={saveArea}>Salvar na Nuvem</button>
+          </div>
+        </div>
+      </div>}
+
+      {/* MODAL CONFIRMAR COLETA */}
+      {confirmColeta&&<div className="overlay" onClick={e=>{if(e.target===e.currentTarget)setConfirmColeta(false)}}>
+        <div className="modal">
+          <div className="modal-hdr" style={{background:"#15803d",borderRadius:"12px 12px 0 0",padding:"20px 26px"}}>
+            <div className="modal-hdr-id" style={{fontSize:18}}>Confirmar Coleta Realizada</div>
+            <div className="modal-hdr-sub">Os paletes da data selecionada serao arquivados no historico</div>
+          </div>
+          <div className="modal-body">
+            <div className="field">
+              <label>Data da Coleta que foi realizada</label>
+              <input type="date" value={coletaDate} onChange={e=>setColetaDate(e.target.value)}
+                style={{width:"100%",background:"#f8fafc",border:"2px solid #e2e8f0",borderRadius:8,padding:"12px 14px",color:"#1e293b",fontFamily:"inherit",fontSize:15,outline:"none"}}/>
+            </div>
+            {coletaDate&&(()=>{
+              const itens = fullSlots.map(s=>cells[s]).filter(Boolean).filter(c=>(c.loja||c.descricao)&&getColetaDate(c)===coletaDate);
+              const totalPal = itens.reduce((s,c)=>s+(parseInt(c.paletes)||1),0);
+              const totalVal = itens.reduce((s,c)=>s+(parseFloat(c.qtd)||0)*(parseFloat(c.valorUnit)||0),0);
+              return itens.length>0?(
+                <div style={{background:"#f0fdf4",border:"2px solid #86efac",borderRadius:8,padding:"12px 16px",marginTop:8}}>
+                  <div style={{fontWeight:700,fontSize:13,color:"#15803d",marginBottom:8}}>{itens.length} posicoes · {totalPal} paletes encontrados</div>
+                  <div style={{display:"flex",flexWrap:"wrap",gap:4,marginBottom:8}}>
+                    {itens.map((c,i)=><div key={i} style={{background:"#dcfce7",border:"1px solid #4ade80",borderRadius:4,padding:"3px 8px",fontSize:11,color:"#15803d",fontWeight:600}}>{c.loja||c.descricao} · {c.paletes||1}pal</div>)}
+                  </div>
+                  {perm?.verValores&&<div style={{fontSize:12,color:"#64748b"}}>Valor total: R$ {totalVal.toLocaleString("pt-BR",{minimumFractionDigits:2})}</div>}
+                </div>
+              ):(
+                <div style={{background:"#fef2f2",border:"1.5px solid #fca5a5",borderRadius:8,padding:"10px 14px",fontSize:13,color:"#dc2626",fontWeight:600,marginTop:8}}>
+                  Nenhum palete com a data {fmtDate(coletaDate)} encontrado.
+                </div>
+              );
+            })()}
+          </div>
+          <div className="modal-foot">
+            <button className="btn btn-ghost" onClick={()=>setConfirmColeta(false)}>Cancelar</button>
+            <button className="btn btn-success" onClick={()=>{ if(!coletaDate){showToast("Selecione a data","warn");return;} doConfirmarColeta(coletaDate); }}>
+              Confirmar e Arquivar
+            </button>
+          </div>
+        </div>
+      </div>}
+
+      {/* MODAL CONFIRMACAO PARA OPERADORES */}
+      {confirmModal&&<div className="overlay" onClick={e=>{if(e.target===e.currentTarget)setConfirmModal(null)}}>
+        <div className="modal">
+          <div className="modal-hdr" style={{background:"#dc2626",borderRadius:"12px 12px 0 0",padding:"20px 26px"}}>
+            <div className="modal-hdr-id" style={{fontSize:18}}>Confirmar exclusao</div>
+            <div className="modal-hdr-sub">Posicao: {confirmModal.id}</div>
+          </div>
+          <div className="modal-body">
+            <div style={{background:"#fef2f2",border:"2px solid #fca5a5",borderRadius:8,padding:"12px 16px",fontSize:13,color:"#dc2626",fontWeight:600,marginBottom:16}}>
+              Esta acao e irreversivel. O conteudo desta posicao sera apagado.
+            </div>
+            <div className="field">
+              <label>Justificativa obrigatoria</label>
+              <input value={justText} onChange={e=>setJustText(e.target.value)}
+                placeholder="Motivo da exclusao (ex: produto trocado de endereco, erro de cadastro...)"
+                style={{width:"100%",background:"#f8fafc",border:"2px solid #e2e8f0",borderRadius:8,padding:"12px 14px",color:"#1e293b",fontFamily:"inherit",fontSize:15,outline:"none"}}/>
+            </div>
+            <div style={{fontSize:12,color:"#94a3b8"}}>Usuario: {session?.nome} · {new Date().toLocaleString("pt-BR")}</div>
+          </div>
+          <div className="modal-foot">
+            <button className="btn btn-ghost" onClick={()=>setConfirmModal(null)}>Cancelar</button>
+            <button className="btn btn-danger"
+              onClick={()=>{ if(!justText.trim()){showToast("Justificativa obrigatoria","warn");return;} executeClear(confirmModal.id,confirmModal.tipo,justText); }}
+              style={{background:"#dc2626",color:"#fff",border:"none"}}>
+              Confirmar Exclusao
+            </button>
           </div>
         </div>
       </div>}
