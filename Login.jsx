@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { login } from '../firebase.js';
-import { useAuth } from '../App.jsx';
+import { login } from './firebase.js';
+import { useAuth } from './App.jsx';
 
 const S = {
   page: { minHeight:'100vh', background:'#08090D', display:'flex', alignItems:'center', justifyContent:'center', fontFamily:'Outfit, sans-serif', padding:'24px' },
