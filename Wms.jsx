@@ -236,8 +236,8 @@ export default function Wms() {
                           {Array.from({length:rua.vaos},(_,i)=>i+1).map(v => (
                             <div key={v} className="wms-vao">
                               {LADOS.map(l => {
-                                // P10 A1/A2 sem longarina
-                                if (v === rua.vaos && (a === 1 || a === 2)) {
+                                // Só bloquear P10 A1/A2 em ruas com 10 vãos (acesso empilhadeira)
+                                if (rua.vaos === 10 && v === rua.vaos && (a === 1 || a === 2)) {
                                   return <div key={l} className="wms-cell wms-cell-blocked" title="Sem longarina">✕</div>;
                                 }
                                 const id = cellId(rua.id,v,l,a);
@@ -261,7 +261,6 @@ export default function Wms() {
                         </div>
                       ))}
                     </div>
-                  </div>
                   </div>
               );
               return (
