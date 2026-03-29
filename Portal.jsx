@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { useAuth } from '../App.jsx';
-import { logout, getWmsData } from '../firebase.js';
+import { useAuth } from './App.jsx';
+import { logout, getWmsData } from './firebase.js';
 
 export default function Portal() {
   const { user, setUser } = useAuth();
