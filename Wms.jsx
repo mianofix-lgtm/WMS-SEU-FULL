@@ -266,8 +266,7 @@ export default function Wms() {
               return (
                 <div key={rua.id}>
                   {ri === 0 ? (
-                    <div style={{display:'grid',gridTemplateColumns:'auto 1fr',gap:16,alignItems:'start'}}>
-                      {ruaBlock}
+                    <div style={{display:'grid',gridTemplateColumns:'1fr auto',gap:16,alignItems:'start'}}>
                       <div className="wms-area-box">
                         <div className="wms-area-title" style={{background:'#7c3aed',color:'#fff'}}>Produção <span>({prodSlots.length} posições)</span></div>
                         <div className="wms-flex-grid" style={{gridTemplateColumns:'repeat(6,1fr)'}}>
@@ -282,6 +281,7 @@ export default function Wms() {
                           })}
                         </div>
                       </div>
+                      {ruaBlock}
                     </div>
                   ) : ruaBlock}
                   {showCostas && <div className="wms-costas">COSTAS</div>}
@@ -292,22 +292,8 @@ export default function Wms() {
 
             <div className="wms-corredor">CORREDOR</div>
 
-            {/* Flex + Recebimento side by side */}
-            <div style={{display:'grid',gridTemplateColumns:'2fr 1fr',gap:16,marginTop:12}}>
-              <div className="wms-area-box">
-                <div className="wms-area-title" style={{background:'#00C896',color:'#2E2C3A'}}>Estoque Flex <span>({flexSlots.length} gavetas)</span></div>
-                <div className="wms-flex-grid">
-                  {flexSlots.map(s => {
-                    const c = cells[s]; const has = c && (c.descricao || c.loja);
-                    return (
-                      <div key={s} className={`wms-flex-slot ${has?"filled":""}`} onClick={()=>openCell(s,"flex")} title={has?`${c.loja} - ${c.descricao}`:s}>
-                        <span className="wms-flex-num">{s.replace("FLEX-","")}</span>
-                        {has ? <span className="wms-flex-loja">{c.loja||"-"}</span> : <span style={{color:'#86efac'}}>+</span>}
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
+            {/* Recebimento + Flex side by side */}
+            <div style={{display:'grid',gridTemplateColumns:'1fr 2fr',gap:16,marginTop:12}}>
               <div className="wms-area-box">
                 <div className="wms-area-title" style={{background:'#0891b2',color:'#fff'}}>Recebimento <span>({recebSlots.length} posições)</span></div>
                 <div className="wms-flex-grid" style={{gridTemplateColumns:'repeat(5,1fr)'}}>
@@ -317,6 +303,20 @@ export default function Wms() {
                       <div key={s} className={`wms-flex-slot ${has?"filled":""}`} style={has?{background:'#0891b215',borderColor:'#0891b2'}:{}} onClick={()=>openCell(s,"flex")} title={has?`${c.loja} - ${c.descricao}`:s}>
                         <span className="wms-flex-num">{s.replace("RECEB-","R")}</span>
                         {has ? <span className="wms-flex-loja" style={{color:'#67e8f9'}}>{c.loja||c.descricao||"-"}</span> : <span style={{color:'#67e8f9'}}>+</span>}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+              <div className="wms-area-box">
+                <div className="wms-area-title" style={{background:'#00C896',color:'#2E2C3A'}}>Estoque Flex <span>({flexSlots.length} gavetas)</span></div>
+                <div className="wms-flex-grid">
+                  {flexSlots.map(s => {
+                    const c = cells[s]; const has = c && (c.descricao || c.loja);
+                    return (
+                      <div key={s} className={`wms-flex-slot ${has?"filled":""}`} onClick={()=>openCell(s,"flex")} title={has?`${c.loja} - ${c.descricao}`:s}>
+                        <span className="wms-flex-num">{s.replace("FLEX-","")}</span>
+                        {has ? <span className="wms-flex-loja">{c.loja||"-"}</span> : <span style={{color:'#86efac'}}>+</span>}
                       </div>
                     );
                   })}
