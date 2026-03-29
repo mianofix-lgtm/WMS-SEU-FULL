@@ -5,7 +5,6 @@ import Landing from './Landing.jsx';
 import Login from './Login.jsx';
 import Portal from './Portal.jsx';
 import Wms from './Wms.jsx';
-import Setup from './Setup.jsx';
 
 // ─── Auth Context ────────────────────────────────────────
 export const AuthContext = createContext(null);
@@ -46,7 +45,6 @@ export default function App() {
             <Wms />
           </ProtectedRoute>
         } />
-        <Route path="/setup" element={<Setup />} />
         <Route path="*" element={<Navigate to="/" />} />
       </Routes>
     </AuthContext.Provider>
