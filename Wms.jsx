@@ -19,8 +19,8 @@ const EMPTY = { sku:"", nome:"", qtd:"", valorUnit:"", curva:"", loja:"", obs:""
 const EMPTY_AREA = { descricao:"", loja:"", qtd:"", valorUnit:"", obs:"", paletes:"", dataEntrada:"" };
 const fullSlots = Array.from({length:40},(_,i)=>`FULL-${i+1}`);
 const flexSlots = Array.from({length:60},(_,i)=>`FLEX-${i+1}`);
-const prodSlots = Array.from({length:12},(_,i)=>`PROD-${i+1}`);
-const recebSlots = Array.from({length:8},(_,i)=>`RECEB-${i+1}`);
+const prodSlots = Array.from({length:30},(_,i)=>`PROD-${i+1}`);
+const recebSlots = Array.from({length:30},(_,i)=>`RECEB-${i+1}`);
 
 function cellId(r,v,l,a){ return `${r}-P${String(v).padStart(2,"0")}${l}-A${a}`; }
 
@@ -218,28 +218,11 @@ export default function Wms() {
         {/* Map Tab */}
         {tab === "mapa" && (
           <div className="wms-map">
-            {/* Produção */}
-            <div className="wms-area-box" style={{marginBottom:12}}>
-              <div className="wms-area-title" style={{background:'#7c3aed',color:'#fff'}}>Produção <span>({prodSlots.length} posições)</span></div>
-              <div className="wms-flex-grid" style={{gridTemplateColumns:'repeat(6,1fr)'}}>
-                {prodSlots.map(s => {
-                  const c = cells[s]; const has = c && (c.descricao || c.loja);
-                  return (
-                    <div key={s} className={`wms-flex-slot ${has?"filled":""}`} style={has?{background:'#7c3aed15',borderColor:'#7c3aed'}:{}} onClick={()=>openCell(s,"flex")} title={has?`${c.loja} - ${c.descricao}`:s}>
-                      <span className="wms-flex-num">{s.replace("PROD-","P")}</span>
-                      {has ? <span className="wms-flex-loja" style={{color:'#c4b5fd'}}>{c.loja||c.descricao||"-"}</span> : <span style={{color:'#c4b5fd'}}>+</span>}
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-
             <div className="wms-map-label">PAREDE</div>
             {WAREHOUSE.ruas.map((rua, ri) => {
               const showCorredor = ri === 0 || ri === 2;
               const showCostas = ri === 1 || ri === 3;
-              return (
-                <div key={rua.id}>
+              const ruaBlock = (
                   <div className="wms-rua-block">
                     <div className="wms-rua-label" data-tipo={rua.tipo}>{rua.label} <span>({rua.tipo === "seufull" ? "Clientes Seu Full" : "Mianofix / Iscali"})</span></div>
                     <div className="wms-rua-grid">
@@ -279,6 +262,29 @@ export default function Wms() {
                       ))}
                     </div>
                   </div>
+                  </div>
+              );
+              return (
+                <div key={rua.id}>
+                  {ri === 0 ? (
+                    <div style={{display:'grid',gridTemplateColumns:'auto 1fr',gap:16,alignItems:'start'}}>
+                      {ruaBlock}
+                      <div className="wms-area-box">
+                        <div className="wms-area-title" style={{background:'#7c3aed',color:'#fff'}}>Produção <span>({prodSlots.length} posições)</span></div>
+                        <div className="wms-flex-grid" style={{gridTemplateColumns:'repeat(6,1fr)'}}>
+                          {prodSlots.map(s => {
+                            const c = cells[s]; const has = c && (c.descricao || c.loja);
+                            return (
+                              <div key={s} className={`wms-flex-slot ${has?"filled":""}`} style={has?{background:'#7c3aed15',borderColor:'#7c3aed'}:{}} onClick={()=>openCell(s,"flex")} title={has?`${c.loja} - ${c.descricao}`:s}>
+                                <span className="wms-flex-num">{s.replace("PROD-","P")}</span>
+                                {has ? <span className="wms-flex-loja" style={{color:'#c4b5fd'}}>{c.loja||c.descricao||"-"}</span> : <span style={{color:'#c4b5fd'}}>+</span>}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    </div>
+                  ) : ruaBlock}
                   {showCostas && <div className="wms-costas">COSTAS</div>}
                   {showCorredor && <div className="wms-corredor">CORREDOR</div>}
                 </div>
@@ -287,8 +293,8 @@ export default function Wms() {
 
             <div className="wms-corredor">CORREDOR</div>
 
-            {/* Full + Flex */}
-            <div className="wms-areas">
+            {/* Flex + Recebimento side by side */}
+            <div style={{display:'grid',gridTemplateColumns:'2fr 1fr',gap:16,marginTop:12}}>
               <div className="wms-area-box">
                 <div className="wms-area-title" style={{background:'#00C896',color:'#2E2C3A'}}>Estoque Flex <span>({flexSlots.length} gavetas)</span></div>
                 <div className="wms-flex-grid">
@@ -303,7 +309,24 @@ export default function Wms() {
                   })}
                 </div>
               </div>
+              <div className="wms-area-box">
+                <div className="wms-area-title" style={{background:'#0891b2',color:'#fff'}}>Recebimento <span>({recebSlots.length} posições)</span></div>
+                <div className="wms-flex-grid" style={{gridTemplateColumns:'repeat(5,1fr)'}}>
+                  {recebSlots.map(s => {
+                    const c = cells[s]; const has = c && (c.descricao || c.loja);
+                    return (
+                      <div key={s} className={`wms-flex-slot ${has?"filled":""}`} style={has?{background:'#0891b215',borderColor:'#0891b2'}:{}} onClick={()=>openCell(s,"flex")} title={has?`${c.loja} - ${c.descricao}`:s}>
+                        <span className="wms-flex-num">{s.replace("RECEB-","R")}</span>
+                        {has ? <span className="wms-flex-loja" style={{color:'#67e8f9'}}>{c.loja||c.descricao||"-"}</span> : <span style={{color:'#67e8f9'}}>+</span>}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
 
+            {/* Full Pronto */}
+            <div style={{marginTop:12}}>
               <div className="wms-area-box">
                 <div className="wms-area-title" style={{background:'#1e3a5f',color:'#fff'}}>
                   Full Pronto <span>({fullStats.paletes}/28 paletes)</span>
@@ -379,22 +402,6 @@ export default function Wms() {
                     );
                   })}
                 </div>
-              </div>
-            </div>
-
-            {/* Recebimento */}
-            <div className="wms-area-box" style={{marginTop:12}}>
-              <div className="wms-area-title" style={{background:'#0891b2',color:'#fff'}}>Recebimento <span>({recebSlots.length} posições)</span></div>
-              <div className="wms-flex-grid" style={{gridTemplateColumns:'repeat(8,1fr)'}}>
-                {recebSlots.map(s => {
-                  const c = cells[s]; const has = c && (c.descricao || c.loja);
-                  return (
-                    <div key={s} className={`wms-flex-slot ${has?"filled":""}`} style={has?{background:'#0891b215',borderColor:'#0891b2'}:{}} onClick={()=>openCell(s,"flex")} title={has?`${c.loja} - ${c.descricao}`:s}>
-                      <span className="wms-flex-num">{s.replace("RECEB-","R")}</span>
-                      {has ? <span className="wms-flex-loja" style={{color:'#67e8f9'}}>{c.loja||c.descricao||"-"}</span> : <span style={{color:'#67e8f9'}}>+</span>}
-                    </div>
-                  );
-                })}
               </div>
             </div>
           </div>
