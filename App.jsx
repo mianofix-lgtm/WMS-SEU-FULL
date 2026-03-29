@@ -1,11 +1,11 @@
 import { useState, useEffect, createContext, useContext } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { onAuth } from './firebase.js';
-import Landing from './pages/Landing.jsx';
-import Login from './pages/Login.jsx';
-import Portal from './pages/Portal.jsx';
-import Wms from './pages/Wms.jsx';
-import Setup from './pages/Setup.jsx';
+import Landing from './Landing.jsx';
+import Login from './Login.jsx';
+import Portal from './Portal.jsx';
+import Wms from './Wms.jsx';
+import Setup from './Setup.jsx';
 
 // ─── Auth Context ────────────────────────────────────────
 export const AuthContext = createContext(null);
