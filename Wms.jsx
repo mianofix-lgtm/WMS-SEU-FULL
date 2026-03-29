@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect, useCallback } from "react";
 import { useNavigate, Link } from "react-router-dom";
-import { useAuth } from "../App.jsx";
-import { logout, getWmsData, saveWmsData } from "../firebase.js";
+import { useAuth } from "./App.jsx";
+import { logout, getWmsData, saveWmsData } from "./firebase.js";
 
 const CURVA_COLORS = { A: "#dc2626", B: "#d97706", C: "#16a34a", "": "#94a3b8" };
 const WAREHOUSE = {
