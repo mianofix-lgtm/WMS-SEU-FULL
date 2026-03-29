@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect, useCallback } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { useAuth } from "./App.jsx";
+import { getPerms } from "./firebase.js";
 import { logout, getWmsData, saveWmsData } from "./firebase.js";
 
 const CURVA_COLORS = { A: "#dc2626", B: "#d97706", C: "#16a34a", "": "#94a3b8" };
@@ -35,8 +36,11 @@ export default function Wms() {
   const [search, setSearch] = useState("");
 
   // Permissions
-  const canDelete = user?.role === 'diretor';
-  const canSeeValues = user?.role === 'diretor' || user?.role === 'gerente';
+  const perms = getPerms(user?.role);
+  const canDelete = perms.canDelete;
+  const canSeeValues = perms.canSeeValues;
+  const canEdit = perms.canEdit;
+  const canEditValues = perms.canEditValues;
 
   // Load from Firebase
   useEffect(() => {
@@ -165,6 +169,7 @@ export default function Wms() {
               <span className="wms-user-name">{user?.nome || user?.email}</span>
               <span className="wms-user-role">{user?.role}</span>
             </div>
+            {user?.role === "diretor" && <Link to="/admin" className="wms-portal-link" style={{color:"#fbbf24"}}>Admin</Link>}
             <Link to="/portal" className="wms-portal-link">Portal</Link>
             <button onClick={handleLogout} className="wms-logout">Sair</button>
           </div>
@@ -197,7 +202,8 @@ export default function Wms() {
                       <div className="wms-rua-head"><span></span>{Array.from({length:rua.vaos},(_,i)=>i+1).map(v=>(
                         <span key={v} className="wms-col-head">P{String(v).padStart(2,"0")}</span>
                       ))}</div>
-                      {[4,3,2,1].map(a => (
+                      {/* R2 e R4: corredor acima, A1 no topo. R1/R3/R5: A1 embaixo */}
+                      {(rua.id === "R2" || rua.id === "R4" ? [1,2,3,4] : [4,3,2,1]).map(a => (
                         <div key={a} className="wms-rua-row">
                           <span className="wms-row-head">A{a}</span>
                           {Array.from({length:rua.vaos},(_,i)=>i+1).map(v => (
@@ -270,8 +276,39 @@ export default function Wms() {
                       <div className="wms-full-stat-v" style={{color:fullStats.valor>900000?'#fbbf24':'#00C896'}}>R$ {fullStats.valor.toLocaleString("pt-BR",{minimumFractionDigits:2})}</div>
                       <div className="wms-full-bar"><div style={{width:`${Math.min(100,fullStats.valor/1000000*100)}%`,background:fullStats.valor>900000?'#fbbf24':'#00C896'}}></div></div>
                     </div>
+                    <div className="wms-full-stat">
+                      <div className="wms-full-stat-l">SKUs no Full</div>
+                      <div className="wms-full-stat-v">{fullStats.occupied}</div>
+                    </div>
+                    <div className="wms-full-stat">
+                      <div className="wms-full-stat-l">Limite Restante</div>
+                      <div className="wms-full-stat-v" style={{fontSize:14,color:'#C0C2CC'}}>R$ {(1000000-fullStats.valor).toLocaleString("pt-BR",{minimumFractionDigits:2})}</div>
+                    </div>
                   </div>
                 )}
+                {/* Coleta schedule */}
+                <div style={{display:'flex',gap:8,padding:'6px 12px',flexWrap:'wrap'}}>
+                  {(() => {
+                    const now = new Date();
+                    const getNext = (day) => { const d = new Date(now); d.setDate(d.getDate()+((day-d.getDay()+7)%7)||7); return d; };
+                    const nextSeg = getNext(1);
+                    const nextSex = getNext(5);
+                    const fmt = (d) => `${d.getDate().toString().padStart(2,'0')}/${(d.getMonth()+1).toString().padStart(2,'0')}`;
+                    const diffDays = (d) => Math.ceil((d-now)/(1000*60*60*24));
+                    return (
+                      <>
+                        <div style={{flex:1,background:'#161820',borderRadius:8,padding:'8px 12px',fontSize:11}}>
+                          <span style={{color:'#8B8D97'}}>Próx. Coleta SEG</span>
+                          <div style={{color:'#3b82f6',fontWeight:700,fontSize:14}}>{fmt(nextSeg)} <span style={{color:'#8B8D97',fontWeight:400}}>({diffDays(nextSeg)}d)</span></div>
+                        </div>
+                        <div style={{flex:1,background:'#161820',borderRadius:8,padding:'8px 12px',fontSize:11}}>
+                          <span style={{color:'#8B8D97'}}>Próx. Coleta SEX</span>
+                          <div style={{color:'#f97316',fontWeight:700,fontSize:14}}>{fmt(nextSex)} <span style={{color:'#8B8D97',fontWeight:400}}>({diffDays(nextSex)}d)</span></div>
+                        </div>
+                      </>
+                    );
+                  })()}
+                </div>
                 <div className="wms-full-grid">
                   {fullSlots.map(s => {
                     const c = cells[s]; const has = c && (c.descricao || c.loja);
