@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from './App.jsx';
-import { logout, getWmsData } from './firebase.js';
+import { logout, getWmsData, getPerms } from './firebase.js';
 
 export default function Portal() {
   const { user, setUser } = useAuth();
@@ -12,7 +12,8 @@ export default function Portal() {
   const [lastSync, setLastSync] = useState(null);
 
   // Determine what stock to show
-  const isInternal = user?.role === 'diretor' || user?.role === 'gerente';
+  const isInternal = user?.role === 'diretor' || user?.role === 'gerente' || user?.role === 'comercial' || user?.role === 'financeiro';
+  const perms = getPerms(user?.role);
   const clientLoja = user?.loja || '';
 
   useEffect(() => {
@@ -79,7 +80,8 @@ export default function Portal() {
             <div style={S.userName}>{user?.nome || user?.email}</div>
             <div style={S.userRole}>{user?.role === 'cliente' ? user?.loja : user?.role}</div>
           </div>
-          {isInternal && <Link to="/wms" style={S.wmsLink}>WMS →</Link>}
+          {user?.role === 'diretor' && <Link to="/admin" style={{...S.wmsLink, color:'#fbbf24'}}>Admin</Link>}
+          {perms.canEdit && <Link to="/wms" style={S.wmsLink}>WMS →</Link>}
           <button onClick={handleLogout} style={S.logoutBtn}>Sair</button>
         </div>
       </header>
@@ -104,7 +106,7 @@ export default function Portal() {
             <div style={S.kpiLabel}>Unidades</div>
             <div style={S.kpiValue}>{totalQtd.toLocaleString('pt-BR')}</div>
           </div>
-          {(isInternal || user?.canSeeValues) && (
+          {(perms.canSeeValues) && (
             <div style={S.kpi}>
               <div style={S.kpiLabel}>Valor em Estoque</div>
               <div style={{...S.kpiValue, color:'#00C896'}}>R$ {totalValue.toLocaleString('pt-BR', {minimumFractionDigits:2})}</div>
@@ -138,8 +140,8 @@ export default function Portal() {
                 <th style={S.th}>Curva</th>
                 {isInternal && <th style={S.th}>Loja</th>}
                 <th style={{...S.th, textAlign:'right'}}>Qtd</th>
-                {(isInternal || user?.canSeeValues) && <th style={{...S.th, textAlign:'right'}}>Valor Unit.</th>}
-                {(isInternal || user?.canSeeValues) && <th style={{...S.th, textAlign:'right'}}>Total</th>}
+                {(perms.canSeeValues) && <th style={{...S.th, textAlign:'right'}}>Valor Unit.</th>}
+                {(perms.canSeeValues) && <th style={{...S.th, textAlign:'right'}}>Total</th>}
               </tr>
             </thead>
             <tbody>
@@ -157,8 +159,8 @@ export default function Portal() {
                   </td>
                   {isInternal && <td style={{...S.td, fontSize:13}}>{item.loja || '-'}</td>}
                   <td style={{...S.td, textAlign:'right', fontWeight:700}}>{parseInt(item.qtd || 0).toLocaleString('pt-BR')}</td>
-                  {(isInternal || user?.canSeeValues) && <td style={{...S.td, textAlign:'right', fontSize:13}}>R$ {parseFloat(item.valorUnit || 0).toFixed(2)}</td>}
-                  {(isInternal || user?.canSeeValues) && <td style={{...S.td, textAlign:'right', fontWeight:600, color:'#C0C2CC'}}>R$ {((parseInt(item.qtd)||0)*(parseFloat(item.valorUnit)||0)).toLocaleString('pt-BR',{minimumFractionDigits:2})}</td>}
+                  {(perms.canSeeValues) && <td style={{...S.td, textAlign:'right', fontSize:13}}>R$ {parseFloat(item.valorUnit || 0).toFixed(2)}</td>}
+                  {(perms.canSeeValues) && <td style={{...S.td, textAlign:'right', fontWeight:600, color:'#C0C2CC'}}>R$ {((parseInt(item.qtd)||0)*(parseFloat(item.valorUnit)||0)).toLocaleString('pt-BR',{minimumFractionDigits:2})}</td>}
                 </tr>
               ))}
             </tbody>

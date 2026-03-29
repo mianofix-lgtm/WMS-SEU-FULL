@@ -1,10 +1,13 @@
 import { useState, useEffect, createContext, useContext } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
-import { onAuth } from './firebase.js';
+import { onAuth, getPerms } from './firebase.js';
 import Landing from './Landing.jsx';
 import Login from './Login.jsx';
 import Portal from './Portal.jsx';
 import Wms from './Wms.jsx';
+import Register from './Register.jsx';
+import Admin from './Admin.jsx';
+import Setup2 from './Setup2.jsx';
 
 // ─── Auth Context ────────────────────────────────────────
 export const AuthContext = createContext(null);
@@ -30,21 +33,30 @@ export default function App() {
     return unsub;
   }, []);
 
+  const perms = user ? getPerms(user.role) : {};
+
   return (
-    <AuthContext.Provider value={{ user, setUser, loading }}>
+    <AuthContext.Provider value={{ user, setUser, loading, perms }}>
       <Routes>
         <Route path="/" element={<Landing />} />
         <Route path="/login" element={<Login />} />
+        <Route path="/cadastro" element={<Register />} />
         <Route path="/portal" element={
-          <ProtectedRoute roles={['diretor','gerente','cliente']}>
+          <ProtectedRoute roles={['diretor','gerente','comercial','financeiro','cliente']}>
             <Portal />
           </ProtectedRoute>
         } />
         <Route path="/wms" element={
-          <ProtectedRoute roles={['diretor','gerente','operador']}>
+          <ProtectedRoute roles={['diretor','comercial','logistica','financeiro']}>
             <Wms />
           </ProtectedRoute>
         } />
+        <Route path="/admin" element={
+          <ProtectedRoute roles={['diretor']}>
+            <Admin />
+          </ProtectedRoute>
+        } />
+        <Route path="/setup2" element={<Setup2 />} />
         <Route path="*" element={<Navigate to="/" />} />
       </Routes>
     </AuthContext.Provider>

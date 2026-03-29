@@ -169,6 +169,7 @@ export default function Landing() {
             </div>
             <div style={{textAlign:'center'}}>
               <Link to="/login" className="sf-btn-main">Acessar Portal do Cliente →</Link>
+              <div style={{marginTop:16}}><Link to="/cadastro" style={{color:"#00C896",fontSize:14,fontWeight:600,textDecoration:"none"}}>Ainda não tem conta? Cadastre-se →</Link></div>
             </div>
           </div>
         </section>
