@@ -7,7 +7,6 @@ import Portal from './Portal.jsx';
 import Wms from './Wms.jsx';
 import Register from './Register.jsx';
 import Admin from './Admin.jsx';
-import Setup2 from './Setup2.jsx';
 
 // ─── Auth Context ────────────────────────────────────────
 export const AuthContext = createContext(null);
@@ -56,7 +55,6 @@ export default function App() {
             <Admin />
           </ProtectedRoute>
         } />
-        <Route path="/setup2" element={<Setup2 />} />
         <Route path="*" element={<Navigate to="/" />} />
       </Routes>
     </AuthContext.Provider>

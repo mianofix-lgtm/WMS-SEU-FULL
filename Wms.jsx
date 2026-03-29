@@ -1,8 +1,8 @@
 import { useState, useMemo, useEffect, useCallback } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { useAuth } from "./App.jsx";
-import { getPerms } from "./firebase.js";
-import { logout, getWmsData, saveWmsData } from "./firebase.js";
+import { getPerms, logout, getWmsData, saveWmsData, db } from "./firebase.js";
+import { doc, getDoc, setDoc } from "firebase/firestore";
 
 const CURVA_COLORS = { A: "#dc2626", B: "#d97706", C: "#16a34a", "": "#94a3b8" };
 const WAREHOUSE = {
@@ -19,6 +19,8 @@ const EMPTY = { sku:"", nome:"", qtd:"", valorUnit:"", curva:"", loja:"", obs:""
 const EMPTY_AREA = { descricao:"", loja:"", qtd:"", valorUnit:"", obs:"", paletes:"", dataEntrada:"" };
 const fullSlots = Array.from({length:40},(_,i)=>`FULL-${i+1}`);
 const flexSlots = Array.from({length:60},(_,i)=>`FLEX-${i+1}`);
+const prodSlots = Array.from({length:12},(_,i)=>`PROD-${i+1}`);
+const recebSlots = Array.from({length:8},(_,i)=>`RECEB-${i+1}`);
 
 function cellId(r,v,l,a){ return `${r}-P${String(v).padStart(2,"0")}${l}-A${a}`; }
 
@@ -34,6 +36,7 @@ export default function Wms() {
   const [toast, setToast] = useState(null);
   const [cloudStatus, setCloudStatus] = useState("loading");
   const [search, setSearch] = useState("");
+  const [coletaHistory, setColetaHistory] = useState([]);
 
   // Permissions
   const perms = getPerms(user?.role);
@@ -45,7 +48,32 @@ export default function Wms() {
   // Load from Firebase
   useEffect(() => {
     loadCloud();
+    loadColetaHistory();
   }, []);
+
+  async function loadColetaHistory() {
+    try {
+      const d = await getDoc(doc(db, 'wms', 'coletas'));
+      if (d.exists() && d.data().history) setColetaHistory(JSON.parse(d.data().history));
+    } catch(e) { console.error(e); }
+  }
+
+  async function arquivarColeta() {
+    const fullItems = fullSlots.filter(s => { const c = cells[s]; return c && (c.descricao || c.loja); });
+    if (fullItems.length === 0) { showToast("Nenhum palete para arquivar", "warn"); return; }
+    if (!confirm(`Arquivar ${fullItems.length} posições do Full Pronto como coletadas? Os slots serão limpos.`)) return;
+    const archived = { date: new Date().toISOString(), items: fullItems.map(s => ({slot: s, ...cells[s]})), paletes: fullStats.paletes, valor: fullStats.valor };
+    const next = {...cells};
+    fullItems.forEach(s => delete next[s]);
+    setCells(next);
+    const newHistory = [archived, ...coletaHistory].slice(0, 50);
+    setColetaHistory(newHistory);
+    try {
+      await saveWmsData(next);
+      await setDoc(doc(db, 'wms', 'coletas'), { history: JSON.stringify(newHistory), updatedAt: new Date().toISOString() });
+      showToast(`${fullItems.length} posições arquivadas!`);
+    } catch(e) { showToast("Erro ao arquivar", "warn"); }
+  }
 
   async function loadCloud() {
     try {
@@ -190,6 +218,22 @@ export default function Wms() {
         {/* Map Tab */}
         {tab === "mapa" && (
           <div className="wms-map">
+            {/* Produção */}
+            <div className="wms-area-box" style={{marginBottom:12}}>
+              <div className="wms-area-title" style={{background:'#7c3aed',color:'#fff'}}>Produção <span>({prodSlots.length} posições)</span></div>
+              <div className="wms-flex-grid" style={{gridTemplateColumns:'repeat(6,1fr)'}}>
+                {prodSlots.map(s => {
+                  const c = cells[s]; const has = c && (c.descricao || c.loja);
+                  return (
+                    <div key={s} className={`wms-flex-slot ${has?"filled":""}`} style={has?{background:'#7c3aed15',borderColor:'#7c3aed'}:{}} onClick={()=>openCell(s,"flex")} title={has?`${c.loja} - ${c.descricao}`:s}>
+                      <span className="wms-flex-num">{s.replace("PROD-","P")}</span>
+                      {has ? <span className="wms-flex-loja" style={{color:'#c4b5fd'}}>{c.loja||c.descricao||"-"}</span> : <span style={{color:'#c4b5fd'}}>+</span>}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
             <div className="wms-map-label">PAREDE</div>
             {WAREHOUSE.ruas.map((rua, ri) => {
               const showCorredor = ri === 0 || ri === 2;
@@ -309,6 +353,21 @@ export default function Wms() {
                     );
                   })()}
                 </div>
+                {/* Archive button */}
+                {canDelete && <div style={{padding:'6px 12px'}}>
+                  <button onClick={arquivarColeta} style={{width:'100%',padding:'10px',background:'#dc262620',border:'1px solid #dc262640',borderRadius:8,color:'#fca5a5',fontWeight:700,cursor:'pointer',fontFamily:'inherit',fontSize:12}}>📦 Arquivar Coleta (limpar Full)</button>
+                </div>}
+                {/* Coleta history */}
+                {coletaHistory.length > 0 && <div style={{padding:'6px 12px',maxHeight:150,overflowY:'auto'}}>
+                  <div style={{fontSize:10,fontWeight:700,color:'#8B8D97',textTransform:'uppercase',letterSpacing:1,marginBottom:6}}>Histórico de Coletas</div>
+                  {coletaHistory.slice(0,5).map((h,i) => {
+                    const d = new Date(h.date);
+                    return <div key={i} style={{fontSize:11,color:'#C0C2CC',padding:'4px 8px',background:'#161820',borderRadius:6,marginBottom:4,display:'flex',justifyContent:'space-between'}}>
+                      <span>{d.toLocaleDateString('pt-BR')} {d.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}</span>
+                      <span>{h.paletes||h.items?.length||0} paletes · {canSeeValues ? `R$ ${(h.valor||0).toLocaleString('pt-BR',{minimumFractionDigits:2})}` : ''}</span>
+                    </div>;
+                  })}
+                </div>}
                 <div className="wms-full-grid">
                   {fullSlots.map(s => {
                     const c = cells[s]; const has = c && (c.descricao || c.loja);
@@ -322,10 +381,24 @@ export default function Wms() {
                 </div>
               </div>
             </div>
+
+            {/* Recebimento */}
+            <div className="wms-area-box" style={{marginTop:12}}>
+              <div className="wms-area-title" style={{background:'#0891b2',color:'#fff'}}>Recebimento <span>({recebSlots.length} posições)</span></div>
+              <div className="wms-flex-grid" style={{gridTemplateColumns:'repeat(8,1fr)'}}>
+                {recebSlots.map(s => {
+                  const c = cells[s]; const has = c && (c.descricao || c.loja);
+                  return (
+                    <div key={s} className={`wms-flex-slot ${has?"filled":""}`} style={has?{background:'#0891b215',borderColor:'#0891b2'}:{}} onClick={()=>openCell(s,"flex")} title={has?`${c.loja} - ${c.descricao}`:s}>
+                      <span className="wms-flex-num">{s.replace("RECEB-","R")}</span>
+                      {has ? <span className="wms-flex-loja" style={{color:'#67e8f9'}}>{c.loja||c.descricao||"-"}</span> : <span style={{color:'#67e8f9'}}>+</span>}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
           </div>
         )}
-
-        {/* Inventory Tab */}
         {tab === "inventario" && (
           <div className="wms-inv">
             <input className="wms-search" placeholder="Buscar por nome, SKU ou endereço..." value={search} onChange={e=>setSearch(e.target.value)} />
@@ -568,4 +641,3 @@ const WMS_CSS = `
   .wms-areas{grid-template-columns:1fr;}
 }
 `;
-
