@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from './App.jsx';
 import { LOGO_ICON } from './logo.js';
-import { getAllUsers, approveUser, rejectUser, db } from './firebase.js';
+import { getAllUsers, approveUser, rejectUser, db, getPricing, savePricing, DEFAULT_PRICES } from './firebase.js';
 import { doc, updateDoc, deleteDoc } from 'firebase/firestore';
 
 export default function Admin() {
@@ -14,8 +14,14 @@ export default function Admin() {
   const [lojaInput, setLojaInput] = useState('');
   const [editModal, setEditModal] = useState(null);
   const [editForm, setEditForm] = useState({nome:'',role:'',loja:'',status:''});
+  const [prices, setPrices] = useState(DEFAULT_PRICES);
+  const [pricesTab, setPricesTab] = useState(false);
+  const [pricesSaved, setPricesSaved] = useState(false);
 
-  useEffect(() => { loadUsers(); }, []);
+  useEffect(() => { loadUsers(); loadPrices(); }, []);
+
+  async function loadPrices() { const p = await getPricing(); setPrices(p); }
+  async function handleSavePrices() { await savePricing(prices); setPricesSaved(true); setTimeout(()=>setPricesSaved(false),3000); showToast('Preços atualizados!'); }
 
   async function loadUsers() {
     setLoading(true);
@@ -122,6 +128,51 @@ export default function Admin() {
         <label style={lbS}>Status</label><select value={editForm.status} onChange={e=>setEditForm(f=>({...f,status:e.target.value}))} style={inS}><option value="ativo">Ativo</option><option value="pendente">Pendente</option><option value="rejeitado">Rejeitado</option></select>
         <div style={{display:'flex',gap:10,justifyContent:'flex-end',marginTop:8}}><button onClick={()=>setEditModal(null)} style={bgS}>Cancelar</button><button onClick={handleEditSave} style={bmS}>Salvar →</button></div>
       </div></div>}
+
+      {/* Pricing Tab Toggle */}
+      <div style={{marginTop:40,marginBottom:20}}>
+        <button onClick={()=>setPricesTab(!pricesTab)} style={{padding:'10px 24px',background:pricesTab?'#00C896':'#161820',color:pricesTab?'#2E2C3A':'#00C896',border:'1px solid #1E2028',borderRadius:8,fontWeight:700,cursor:'pointer',fontFamily:'inherit',fontSize:14}}>
+          {pricesTab ? '▼ Tabela de Preços' : '► Configurar Tabela de Preços'}
+        </button>
+      </div>
+
+      {pricesTab && (
+        <div style={{background:'#0F1117',border:'1px solid #1E2028',borderRadius:14,padding:24,marginBottom:32}}>
+          <h2 style={{fontSize:18,fontWeight:800,marginBottom:4}}>Tabela de Preços — Seu Full</h2>
+          <p style={{color:'#8B8D97',fontSize:13,marginBottom:20}}>Altere os valores e clique em Salvar. Os novos preços valem para os próximos faturamentos.</p>
+          
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:16}}>
+            {[
+              ['Posição Pallet (R$/mês)', 'pallet_month'],
+              ['Mínimo Armazenagem (R$/mês)', 'min_monthly'],
+              ['WMS/Portal (R$/mês)', 'wms'],
+              ['Preparo Full ML (R$/unid)', 'full_unit'],
+              ['Envio Flex (R$/envio)', 'flex'],
+              ['Correios/Places (R$/pedido)', 'correios_places'],
+              ['Etiquetagem Full (R$/unid)', 'etiq_full'],
+              ['Etiquetagem Recebimento (R$/unid)', 'etiq_receb'],
+              ['Recebimento Caixa (R$/caixa)', 'receb_caixa'],
+              ['Kit Pequeno (R$/unid)', 'kit_small'],
+              ['Kit Médio (R$/unid)', 'kit_medium'],
+              ['Kit Grande (R$/unid)', 'kit_large'],
+              ['Montagem Embalagem (R$/unid)', 'montagem_embalagem'],
+              ['Triagem Devoluções (R$/NF)', 'devolucao'],
+            ].map(([label, key]) => (
+              <div key={key}>
+                <label style={{display:'block',fontSize:11,fontWeight:600,color:'#8B8D97',textTransform:'uppercase',letterSpacing:1,marginBottom:4}}>{label}</label>
+                <input type="number" step="0.01" value={prices[key]||''} onChange={e=>setPrices(p=>({...p,[key]:parseFloat(e.target.value)||0}))}
+                  style={{width:'100%',padding:'10px 14px',background:'#161820',border:'1.5px solid #1E2028',borderRadius:8,color:'#00C896',fontSize:16,fontWeight:700,fontFamily:'inherit',outline:'none',boxSizing:'border-box'}} />
+              </div>
+            ))}
+          </div>
+          
+          <div style={{marginTop:20,display:'flex',gap:12,alignItems:'center'}}>
+            <button onClick={handleSavePrices} style={{padding:'12px 32px',background:'#00C896',color:'#2E2C3A',border:'none',borderRadius:8,fontWeight:700,cursor:'pointer',fontFamily:'inherit',fontSize:14}}>Salvar Preços →</button>
+            <button onClick={()=>{setPrices({...DEFAULT_PRICES});}} style={{padding:'12px 24px',background:'transparent',color:'#8B8D97',border:'1px solid #1E2028',borderRadius:8,cursor:'pointer',fontFamily:'inherit',fontSize:13}}>Restaurar Padrão</button>
+            {pricesSaved && <span style={{color:'#00C896',fontWeight:600,fontSize:13}}>✓ Salvo!</span>}
+          </div>
+        </div>
+      )}
 
       {toast && <div style={{position:'fixed',bottom:24,right:24,padding:'14px 24px',background:'#00C896',color:'#2E2C3A',fontWeight:700,borderRadius:10,fontSize:14,zIndex:300}}>{toast}</div>}
       <style>{`@keyframes pulse{0%,100%{opacity:1;}50%{opacity:.4;}}`}</style>
