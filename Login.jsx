@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { login } from './firebase.js';
+import { LOGO_ICON } from './logo.js';
 import { useAuth } from './App.jsx';
 
 const S = {
@@ -62,7 +63,7 @@ export default function Login() {
       <div style={S.card}>
         <div style={S.topBar}></div>
         <div style={S.logo}>
-          <div style={S.logoIcon}>e</div>
+          <img src={LOGO_ICON} alt="Seu Full" style={{width:56,height:56,borderRadius:14}} />
           <div style={S.logoText}>Seu<span style={S.logoSpan}>Full</span></div>
           <div style={S.sub}>Acesse o Portal do Cliente ou o WMS</div>
         </div>

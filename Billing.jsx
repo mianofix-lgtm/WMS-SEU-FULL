@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from './App.jsx';
 import { db, getWmsData } from './firebase.js';
+import { LOGO_ICON } from './logo.js';
 import { doc, getDoc, setDoc, collection, getDocs } from 'firebase/firestore';
 
 // Pricing
@@ -202,7 +203,7 @@ export default function Billing() {
       <header style={S.header}>
         <div style={{display:'flex',alignItems:'center',gap:16}}>
           <Link to="/" style={{display:'flex',alignItems:'center',gap:10,textDecoration:'none'}}>
-            <div style={S.logoIcon}>e</div>
+            <img src={LOGO_ICON} alt="Seu Full" style={{width:32,height:32,borderRadius:8}} />
             <div style={S.logoText}>Faturamento <span style={{color:'#00C896'}}>Seu Full</span></div>
           </Link>
         </div>

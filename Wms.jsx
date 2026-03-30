@@ -2,6 +2,7 @@ import { useState, useMemo, useEffect, useCallback } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { useAuth } from "./App.jsx";
 import { getPerms, logout, getWmsData, saveWmsData, db } from "./firebase.js";
+import { LOGO_ICON } from "./logo.js";
 import { doc, getDoc, setDoc } from "firebase/firestore";
 
 const CURVA_COLORS = { A: "#dc2626", B: "#d97706", C: "#16a34a", "": "#94a3b8" };
@@ -185,7 +186,7 @@ export default function Wms() {
         <header className="wms-header">
           <div className="wms-header-left">
             <Link to="/" className="wms-logo-link">
-              <div className="wms-logo-icon">e</div>
+              <img src={LOGO_ICON} alt="Seu Full" className="wms-logo-icon" style={{width:32,height:32,borderRadius:8}} />
               <div className="wms-logo-text">WMS <span>SEU FULL</span></div>
             </Link>
             <div className="wms-cloud" data-status={cloudStatus}>

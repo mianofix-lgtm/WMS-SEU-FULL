@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from './App.jsx';
+import { LOGO_ICON } from './logo.js';
 import { logout, getWmsData, getPerms } from './firebase.js';
 
 export default function Portal() {
@@ -70,7 +71,7 @@ export default function Portal() {
       <header style={S.header}>
         <div style={S.headerLeft}>
           <Link to="/" style={S.logoLink}>
-            <div style={S.logoIcon}>e</div>
+            <img src={LOGO_ICON} alt="Seu Full" style={{width:36,height:36,borderRadius:9}} />
             <div style={S.logoText}>Seu<span style={{color:'#00C896'}}>Full</span></div>
           </Link>
           <div style={S.headerBadge}>Portal do Cliente</div>

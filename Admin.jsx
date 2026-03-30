@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from './App.jsx';
+import { LOGO_ICON } from './logo.js';
 import { getAllUsers, approveUser, rejectUser, db } from './firebase.js';
 import { doc, updateDoc, deleteDoc } from 'firebase/firestore';
 
@@ -53,7 +54,7 @@ export default function Admin() {
   return (
     <div style={{minHeight:'100vh',background:'#08090D',fontFamily:'Outfit, sans-serif',color:'#fff'}}>
       <header style={{background:'#0a0c12ee',backdropFilter:'blur(16px)',borderBottom:'1px solid #1E2028',padding:'14px 28px',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
-        <Link to="/" style={{display:'flex',alignItems:'center',gap:10,textDecoration:'none'}}><div style={{width:32,height:32,background:'#00C896',borderRadius:8,display:'flex',alignItems:'center',justifyContent:'center',fontWeight:900,fontSize:16,color:'#2E2C3A'}}>e</div><div style={{fontSize:17,fontWeight:800,color:'#fff'}}>Admin <span style={{color:'#00C896'}}>Seu Full</span></div></Link>
+        <Link to="/" style={{display:'flex',alignItems:'center',gap:10,textDecoration:'none'}}><img src={LOGO_ICON} alt='Seu Full' style={{width:32,height:32,borderRadius:8}} /><div style={{fontSize:17,fontWeight:800,color:'#fff'}}>Admin <span style={{color:'#00C896'}}>Seu Full</span></div></Link>
         <div style={{display:'flex',gap:12}}><Link to="/wms" style={{padding:'6px 14px',background:'#161820',border:'1px solid #1E2028',borderRadius:6,color:'#00C896',fontSize:12,fontWeight:600,textDecoration:'none'}}>WMS</Link><Link to="/portal" style={{padding:'6px 14px',background:'#161820',border:'1px solid #1E2028',borderRadius:6,color:'#C0C2CC',fontSize:12,fontWeight:600,textDecoration:'none'}}>Portal</Link></div>
       </header>
       <div style={{maxWidth:1100,margin:'0 auto',padding:32}}>

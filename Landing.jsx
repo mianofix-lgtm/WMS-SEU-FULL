@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { Link } from 'react-router-dom';
+import { LOGO_ICON, LOGO_WORDMARK } from './logo.js';
 
 export default function Landing() {
   useEffect(() => {
@@ -19,7 +20,7 @@ export default function Landing() {
         {/* NAV */}
         <nav className="sf-nav">
           <a href="#" className="sf-nav-logo">
-            <div className="sf-nav-icon">e</div>
+            <img src={LOGO_ICON} alt="Seu Full" style={{width:40,height:40,borderRadius:10}} />
             <div className="sf-nav-text">Seu<span>Full</span></div>
           </a>
           <div className="sf-nav-links">
@@ -180,7 +181,7 @@ export default function Landing() {
             <div className="sf-footer-top">
               <div className="sf-footer-brand">
                 <div style={{display:'flex',alignItems:'center',gap:10}}>
-                  <div className="sf-nav-icon">e</div>
+                  <img src={LOGO_ICON} alt="Seu Full" style={{width:40,height:40,borderRadius:10}} />
                   <div className="sf-nav-text">Seu<span>Full</span></div>
                 </div>
                 <p>Soluções operacionais completas para sua logística. Do fulfillment à gestão pós-venda — seu parceiro estratégico no e-commerce.</p>

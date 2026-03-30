@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { registerClient } from './firebase.js';
+import { LOGO_ICON } from './logo.js';
 
 const S = {
   page: { minHeight:'100vh', background:'#08090D', display:'flex', alignItems:'center', justifyContent:'center', fontFamily:'Outfit, sans-serif', padding:'24px' },
@@ -66,7 +67,7 @@ export default function Register() {
       <div style={S.card}>
         <div style={S.topBar}></div>
         <div style={S.logo}>
-          <div style={S.logoIcon}>e</div>
+          <img src={LOGO_ICON} alt="Seu Full" style={{width:56,height:56,borderRadius:14}} />
           <div style={S.logoText}>Seu<span style={S.logoSpan}>Full</span></div>
         </div>
         <div style={S.ok}>
@@ -84,7 +85,7 @@ export default function Register() {
       <div style={S.card}>
         <div style={S.topBar}></div>
         <div style={S.logo}>
-          <div style={S.logoIcon}>e</div>
+          <img src={LOGO_ICON} alt="Seu Full" style={{width:56,height:56,borderRadius:14}} />
           <div style={S.logoText}>Seu<span style={S.logoSpan}>Full</span></div>
           <div style={S.sub}>Cadastro de novo cliente — Portal Seu Full</div>
         </div>
