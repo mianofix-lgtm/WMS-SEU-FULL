@@ -1,27 +1,11 @@
 import { useState, useEffect, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from './App.jsx';
-import { db, getWmsData } from './firebase.js';
-import { LOGO_ICON } from './logo.js';
+import { db, getWmsData, getPricing, DEFAULT_PRICES } from './firebase.js';
+import { LOGO_ICON, LOGO_WORDMARK } from './logo.js';
 import { doc, getDoc, setDoc, collection, getDocs } from 'firebase/firestore';
 
-// Pricing
-const PRICES = {
-  pallet_day: 350 / 30, // ~R$11.67/dia
-  pallet_month: 350,
-  wms: 2000,
-  min_monthly: 1500,
-  flex: 16,
-  correios_places: 3.00,
-  full_unit: 1.20,
-  etiq_full: 0.30,
-  etiq_receb: 0.20,
-  receb_caixa: 1.50,
-  kit_small: 0.50,
-  kit_medium: 1.50,
-  kit_large: 4.00,
-  devolucao: 2.00,
-};
+
 
 const CHANNELS = [
   'Full ML',
@@ -41,6 +25,7 @@ const CHANNELS = [
 
 export default function Billing() {
   const { user } = useAuth();
+  const [PRICES, setPRICES] = useState({...DEFAULT_PRICES, pallet_day: DEFAULT_PRICES.pallet_month / 30});
   const [clients, setClients] = useState([]);
   const [selClient, setSelClient] = useState(null);
   const [sales, setSales] = useState([]);
@@ -59,6 +44,9 @@ export default function Billing() {
   async function loadAll() {
     setLoading(true);
     try {
+      // Load pricing from Firebase
+      const pricing = await getPricing();
+      setPRICES({...pricing, pallet_day: pricing.pallet_month / 30});
       // Load clients from users collection
       const snap = await getDocs(collection(db, 'users'));
       const allUsers = [];
@@ -207,7 +195,132 @@ export default function Billing() {
     await saveClientData(sales, next);
   }
 
-  function palletDays(p) {
+  function generatePDF() {
+    // Build position rows for this client
+    const clientCells = Object.entries(wmsData)
+      .filter(([id, cell]) => cell.loja && selClient && cell.loja.trim().toUpperCase() === selClient.trim().toUpperCase())
+      .sort(([a],[b]) => a.localeCompare(b));
+    
+    const posRows = clientCells.map(([id, cell]) => {
+      const entry = cell.dataEntrada ? new Date(cell.dataEntrada) : null;
+      const days = entry ? Math.max(1, Math.ceil((new Date() - entry) / (86400000))) : 30;
+      const val = days * PRICES.pallet_day;
+      return `<tr><td>${id}</td><td>${cell.nome||cell.descricao||'-'}</td><td style="text-align:center">${cell.qtd||'-'}</td><td style="text-align:center">${entry?entry.toLocaleDateString('pt-BR'):'-'}</td><td style="text-align:center">${days}d</td><td style="text-align:right">R$ ${val.toFixed(2)}</td></tr>`;
+    }).join('');
+
+    // Sales rows grouped by channel
+    const channelTotals = {};
+    sales.forEach(s => {
+      if (!channelTotals[s.canal]) channelTotals[s.canal] = {count:0, units:0, valor:0};
+      channelTotals[s.canal].count++;
+      channelTotals[s.canal].units += s.qtd||1;
+      channelTotals[s.canal].valor += s.valor||0;
+    });
+
+    const serviceRows = Object.entries(channelTotals).map(([ch, d]) => 
+      `<tr><td>${ch}</td><td style="text-align:center">${d.units}</td><td style="text-align:center">${d.count}</td><td style="text-align:right">R$ ${d.valor.toLocaleString('pt-BR',{minimumFractionDigits:2})}</td></tr>`
+    ).join('');
+
+    const monthLabel = new Date(month+'-15').toLocaleDateString('pt-BR',{month:'long',year:'numeric'});
+
+    const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Fatura Seu Full - ${selClient} - ${month}</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800;900&display=swap');
+*{margin:0;padding:0;box-sizing:border-box;}
+body{font-family:'Outfit',sans-serif;color:#1a1a2e;padding:40px;max-width:900px;margin:0 auto;font-size:13px;}
+.header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:32px;padding-bottom:24px;border-bottom:3px solid #00C896;}
+.logo img{height:60px;}
+.header-right{text-align:right;}
+.header-right h1{font-size:22px;color:#2E2C3A;font-weight:900;letter-spacing:-0.5px;}
+.header-right .period{font-size:14px;color:#00C896;font-weight:700;margin-top:4px;}
+.header-right .date{font-size:12px;color:#888;margin-top:4px;}
+.client-box{background:#f8f9fa;border:1px solid #e0e0e0;border-radius:10px;padding:20px;margin-bottom:24px;display:flex;justify-content:space-between;}
+.client-box h3{font-size:11px;color:#888;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;}
+.client-box .name{font-size:20px;font-weight:800;color:#2E2C3A;}
+.client-box .positions{font-size:28px;font-weight:900;color:#00C896;}
+.section{margin-bottom:24px;}
+.section h2{font-size:14px;font-weight:800;color:#2E2C3A;text-transform:uppercase;letter-spacing:1px;margin-bottom:10px;padding:8px 12px;background:#2E2C3A;color:#fff;border-radius:6px;}
+.section h2.green{background:#00C896;color:#2E2C3A;}
+table{width:100%;border-collapse:collapse;margin-bottom:8px;}
+th{text-align:left;padding:8px 10px;background:#f0f0f0;font-size:11px;font-weight:700;color:#666;text-transform:uppercase;letter-spacing:0.5px;border-bottom:2px solid #ddd;}
+td{padding:8px 10px;border-bottom:1px solid #eee;font-size:12px;}
+tr:nth-child(even){background:#fafafa;}
+.total-row{background:#00C89615!important;font-weight:800;font-size:14px;}
+.total-row td{border-top:2px solid #00C896;border-bottom:2px solid #00C896;padding:12px 10px;}
+.grand-total{background:#2E2C3A;border-radius:10px;padding:24px;display:flex;justify-content:space-between;align-items:center;margin:24px 0;}
+.grand-total .label{color:#8B8D97;font-size:13px;font-weight:600;text-transform:uppercase;letter-spacing:1px;}
+.grand-total .value{color:#00C896;font-size:32px;font-weight:900;letter-spacing:-1px;}
+.footer{margin-top:32px;padding-top:16px;border-top:1px solid #e0e0e0;text-align:center;color:#999;font-size:11px;}
+.footer a{color:#00C896;text-decoration:none;font-weight:600;}
+.badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:10px;font-weight:700;background:#00C89620;color:#00C896;}
+@media print{body{padding:20px;}}
+</style></head><body>
+
+<div class="header">
+  <div class="logo"><img src="${LOGO_WORDMARK}" alt="Seu Full" /></div>
+  <div class="header-right">
+    <h1>FATURA DE SERVIÇOS</h1>
+    <div class="period">${monthLabel}</div>
+    <div class="date">Emitido em ${new Date().toLocaleDateString('pt-BR')} às ${new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}</div>
+  </div>
+</div>
+
+<div class="client-box">
+  <div>
+    <h3>Cliente</h3>
+    <div class="name">${selClient}</div>
+  </div>
+  <div style="text-align:right">
+    <h3>Posições Ocupadas</h3>
+    <div class="positions">${clientPositions}</div>
+  </div>
+</div>
+
+<div class="section">
+  <h2 class="green">Armazenagem — Posições Ocupadas</h2>
+  <table>
+    <thead><tr><th>Endereço</th><th>Produto</th><th style="text-align:center">Qtd</th><th style="text-align:center">Entrada</th><th style="text-align:center">Dias</th><th style="text-align:right">Valor</th></tr></thead>
+    <tbody>
+      ${posRows || '<tr><td colspan="6" style="text-align:center;color:#999">Nenhuma posição</td></tr>'}
+      <tr class="total-row"><td colspan="5">Subtotal Armazenagem ${totals.finalPalletCost <= totals.minPalletCost ? '(mínimo aplicado)' : ''}</td><td style="text-align:right">R$ ${totals.finalPalletCost.toLocaleString('pt-BR',{minimumFractionDigits:2})}</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="section">
+  <h2>Serviços Prestados</h2>
+  <table>
+    <thead><tr><th>Serviço</th><th style="text-align:center">Unidades</th><th style="text-align:center">Lançamentos</th><th style="text-align:right">Total</th></tr></thead>
+    <tbody>
+      <tr><td>Sistema WMS + Portal</td><td style="text-align:center">1</td><td style="text-align:center">Fixo</td><td style="text-align:right">R$ ${totals.wms.toLocaleString('pt-BR',{minimumFractionDigits:2})}</td></tr>
+      ${serviceRows}
+      <tr class="total-row"><td colspan="3">Subtotal Serviços</td><td style="text-align:right">R$ ${(totals.salesTotal + totals.wms).toLocaleString('pt-BR',{minimumFractionDigits:2})}</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="grand-total">
+  <div class="label">Total a Pagar</div>
+  <div class="value">R$ ${totals.total.toLocaleString('pt-BR',{minimumFractionDigits:2})}</div>
+</div>
+
+<p style="text-align:center;font-size:12px;color:#666;margin:16px 0;">Vencimento: 7 dias úteis após emissão · Impostos já inclusos nos valores</p>
+
+<div class="footer">
+  <p><strong>Seu Full Particular</strong> — Soluções operacionais completas para sua logística</p>
+  <p style="margin-top:6px"><a href="https://seufull.com.br">seufull.com.br</a> · (11) 97194-4949 · (11) 94374-9798</p>
+</div>
+
+</body></html>`;
+
+    const win = window.open('', '_blank', 'width=900,height=1200');
+    win.document.write(html);
+    win.document.close();
+    setTimeout(() => win.print(), 800);
+  }
+
+  
+    function palletDays(p) {
     const start = new Date(p.entrada);
     const end = p.saida ? new Date(p.saida) : new Date();
     return Math.max(1, Math.ceil((end - start) / (1000*60*60*24)));
@@ -306,9 +419,12 @@ export default function Billing() {
             <label style={S.label}>Mês de referência</label>
             <input type="month" value={month} onChange={e=>setMonth(e.target.value)} style={S.input} />
           </div>
-          <div style={{marginLeft:'auto',textAlign:'right'}}>
-            <div style={S.label}>Posições no WMS</div>
-            <div style={{fontSize:24,fontWeight:900,color:'#00C896'}}>{clientPositions}</div>
+          <div style={{marginLeft:'auto',display:'flex',gap:16,alignItems:'flex-end'}}>
+            <div style={{textAlign:'right'}}>
+              <div style={S.label}>Posições no WMS</div>
+              <div style={{fontSize:24,fontWeight:900,color:'#00C896'}}>{clientPositions}</div>
+            </div>
+            <button onClick={generatePDF} style={{padding:'12px 24px',background:'#2E2C3A',color:'#fff',border:'1px solid #1E2028',borderRadius:8,fontWeight:700,cursor:'pointer',fontFamily:'inherit',fontSize:13,whiteSpace:'nowrap'}}>📄 Gerar Relatório</button>
           </div>
         </div>
 
