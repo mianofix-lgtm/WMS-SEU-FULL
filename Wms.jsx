@@ -198,6 +198,7 @@ export default function Wms() {
               <span className="wms-user-role">{user?.role}</span>
             </div>
             {user?.role === "diretor" && <Link to="/admin" className="wms-portal-link" style={{color:"#fbbf24"}}>Admin</Link>}
+            {(user?.role === "diretor" || user?.role === "comercial") && <Link to="/billing" className="wms-portal-link" style={{color:"#f97316"}}>Faturamento</Link>}
             <Link to="/portal" className="wms-portal-link">Portal</Link>
             <button onClick={handleLogout} className="wms-logout">Sair</button>
           </div>
