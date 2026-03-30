@@ -136,3 +136,34 @@ export async function getClientStock(lojaName) {
   }
   return clientCells;
 }
+
+
+// ─── Pricing config ──────────────────────────────────────
+export const DEFAULT_PRICES = {
+  pallet_month: 350,
+  min_monthly: 1500,
+  wms: 2000,
+  full_unit: 1.20,
+  flex: 16,
+  correios_places: 3.00,
+  etiq_full: 0.30,
+  etiq_receb: 0.20,
+  receb_caixa: 1.50,
+  kit_small: 0.50,
+  kit_medium: 1.50,
+  kit_large: 4.00,
+  montagem_embalagem: 0.50,
+  devolucao: 2.00,
+};
+
+export async function getPricing() {
+  try {
+    const d = await getDoc(doc(db, 'config', 'pricing'));
+    if (d.exists()) return { ...DEFAULT_PRICES, ...d.data() };
+  } catch(e) { console.error(e); }
+  return { ...DEFAULT_PRICES };
+}
+
+export async function savePricing(prices) {
+  await setDoc(doc(db, 'config', 'pricing'), { ...prices, updatedAt: new Date().toISOString() });
+}
