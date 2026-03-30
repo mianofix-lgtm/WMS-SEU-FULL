@@ -10,7 +10,7 @@ const PRICES = {
   pallet_day: 350 / 30, // ~R$11.67/dia
   pallet_month: 350,
   wms: 2000,
-  min_pallets: 2,
+  min_monthly: 1500,
   flex: 16,
   correios_places: 3.00,
   full_unit: 1.20,
@@ -36,6 +36,8 @@ export default function Billing() {
   const [month, setMonth] = useState(() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`; });
   const [toast, setToast] = useState('');
   const [wmsData, setWmsData] = useState({});
+  const [coletaData, setColetaData] = useState([]);
+  const [positionWarnings, setPositionWarnings] = useState([]);
   const [tab, setTab] = useState('resumo');
 
   useEffect(() => { loadAll(); }, []);
@@ -50,6 +52,29 @@ export default function Billing() {
       // All unique lojas from WMS + clients
       const wms = await getWmsData();
       setWmsData(wms);
+      
+      // Load coleta history for auto Full count
+      try {
+        const coletaDoc = await getDoc(doc(db, 'wms', 'coletas'));
+        if (coletaDoc.exists() && coletaDoc.data().history) {
+          setColetaData(JSON.parse(coletaDoc.data().history));
+        }
+      } catch(e) {}
+      
+      // Check for positions missing info
+      const warnings = [];
+      Object.entries(wms).forEach(([id, cell]) => {
+        if (cell.loja && (!cell.nome && !cell.descricao)) {
+          warnings.push({id, loja: cell.loja, issue: 'Sem nome do produto'});
+        }
+        if ((cell.nome || cell.descricao) && !cell.loja) {
+          warnings.push({id, loja: '-', issue: 'Sem loja definida'});
+        }
+        if ((cell.nome || cell.descricao) && !cell.qtd) {
+          warnings.push({id, loja: cell.loja || '-', issue: 'Sem quantidade'});
+        }
+      });
+      setPositionWarnings(warnings);
       // Deduplicate lojas - normalize to title case
       const lojaMap = {};
       const addLoja = (name) => {
@@ -201,14 +226,29 @@ export default function Billing() {
     const palletCost = Math.max(manualPalletCost, wmsPalletCost);
     
     // Minimum: 2 pallets (R$ 700). If usage > minimum, charge usage
-    const minPalletCost = PRICES.min_pallets * PRICES.pallet_month;
+    const minPalletCost = PRICES.min_monthly;
     const finalPalletCost = Math.max(palletCost, minPalletCost);
 
     const salesTotal = sales.reduce((sum, s) => sum + (s.valor || 0), 0);
     const wms = PRICES.wms;
     const total = finalPalletCost + salesTotal + wms;
 
-    return { salesByChannel, palletCost, minPalletCost, finalPalletCost, salesTotal, wms, total, activePallets: pallets.filter(p => !p.saida).length };
+    // Auto-count Full ML items from coleta history for this month
+    const monthStart = month + '-01';
+    const monthEnd = month + '-31';
+    let autoFullItems = 0;
+    coletaData.forEach(coleta => {
+      const d = coleta.date?.substring(0, 10);
+      if (d >= monthStart && d <= monthEnd) {
+        (coleta.items || []).forEach(item => {
+          if (item.loja && selClient && item.loja.trim().toUpperCase() === selClient.trim().toUpperCase()) {
+            autoFullItems += parseInt(item.qtd) || 0;
+          }
+        });
+      }
+    });
+
+    return { salesByChannel, palletCost, minPalletCost, finalPalletCost, salesTotal, wms, total, activePallets: pallets.filter(p => !p.saida).length, autoFullItems, wmsPositions };
   }, [sales, pallets]);
 
   if (loading) return <div style={S.loadPage}><div style={{color:'#00C896',fontSize:16}}>Carregando...</div></div>;
@@ -256,7 +296,7 @@ export default function Billing() {
           <div style={S.kpi}>
             <div style={S.kpiL}>Pallets (proporcional)</div>
             <div style={S.kpiV}>R$ {totals.finalPalletCost.toLocaleString('pt-BR',{minimumFractionDigits:2})}</div>
-            <div style={{fontSize:10,color:'#8B8D97',marginTop:4}}>{clientPositions} posições WMS · Mín R$ {totals.minPalletCost.toLocaleString('pt-BR',{minimumFractionDigits:0})}</div>
+            <div style={{fontSize:10,color:'#8B8D97',marginTop:4}}>{clientPositions} posições WMS · Mín R$ 1.500</div>
           </div>
           <div style={S.kpi}>
             <div style={S.kpiL}>Vendas / Serviços</div>
@@ -272,6 +312,26 @@ export default function Billing() {
             <div style={{fontSize:28,fontWeight:900,color:'#00C896',marginTop:4}}>R$ {totals.total.toLocaleString('pt-BR',{minimumFractionDigits:2})}</div>
           </div>
         </div>
+
+        {/* Auto Full info */}
+        {totals.autoFullItems > 0 && (
+          <div style={{background:'#00C89610',border:'1px solid #00C89630',borderRadius:10,padding:'12px 16px',marginBottom:12,fontSize:13}}>
+            <span style={{color:'#00C896',fontWeight:700}}>Full ML automático:</span> {totals.autoFullItems.toLocaleString('pt-BR')} itens detectados nas coletas do mês = <span style={{fontWeight:700}}>R$ {(totals.autoFullItems * PRICES.full_unit).toLocaleString('pt-BR',{minimumFractionDigits:2})}</span>
+          </div>
+        )}
+
+        {/* Position warnings */}
+        {positionWarnings.length > 0 && (
+          <div style={{background:'#fbbf2410',border:'1px solid #fbbf2430',borderRadius:10,padding:'12px 16px',marginBottom:12,fontSize:12}}>
+            <span style={{color:'#fbbf24',fontWeight:700}}>⚠ {positionWarnings.length} posições com informação incompleta</span>
+            <div style={{marginTop:8,maxHeight:80,overflowY:'auto'}}>
+              {positionWarnings.slice(0,10).map((w,i) => (
+                <div key={i} style={{color:'#C0C2CC',marginBottom:2}}><span style={{color:'#fbbf24',fontFamily:'monospace'}}>{w.id}</span> — {w.loja} — {w.issue}</div>
+              ))}
+              {positionWarnings.length > 10 && <div style={{color:'#8B8D97'}}>...e mais {positionWarnings.length - 10}</div>}
+            </div>
+          </div>
+        )}
 
         {/* Tabs */}
         <div style={S.tabs}>
@@ -299,6 +359,32 @@ export default function Billing() {
                 <tr style={{background:'#00C89610'}}><td style={{...S.td,fontWeight:900,fontSize:15}} colSpan={3}>TOTAL</td><td style={{...S.td,textAlign:'right',fontWeight:900,fontSize:18,color:'#00C896'}}>R$ {totals.total.toLocaleString('pt-BR',{minimumFractionDigits:2})}</td></tr>
               </tbody>
             </table>
+            
+            {/* Positions detail with entry dates */}
+            <h3 style={{fontSize:14,fontWeight:700,marginTop:24,marginBottom:12}}>Posições Ocupadas — Datas de Entrada</h3>
+            <table style={S.table}><thead><tr>
+              <th style={S.th}>Endereço</th><th style={S.th}>Produto</th><th style={S.th}>Qtd</th><th style={S.th}>Data Entrada</th><th style={S.th}>Dias</th><th style={{...S.th,textAlign:'right'}}>Valor Proporcional</th>
+            </tr></thead><tbody>
+              {Object.entries(wmsData).filter(([id, cell]) => cell.loja && selClient && cell.loja.trim().toUpperCase() === selClient.trim().toUpperCase()).sort(([a],[b]) => a.localeCompare(b)).map(([id, cell]) => {
+                const entryDate = cell.dataEntrada ? new Date(cell.dataEntrada) : null;
+                const now = new Date();
+                const days = entryDate ? Math.max(1, Math.ceil((now - entryDate) / (1000*60*60*24))) : 30;
+                const dailyVal = days * PRICES.pallet_day;
+                return (
+                  <tr key={id}>
+                    <td style={{...S.td,fontFamily:'monospace',color:'#00C896',fontWeight:700,fontSize:12}}>{id}</td>
+                    <td style={S.td}>{cell.nome || cell.descricao || '-'}</td>
+                    <td style={S.td}>{cell.qtd || '-'}</td>
+                    <td style={S.td}>{entryDate ? entryDate.toLocaleDateString('pt-BR') : <span style={{color:'#fbbf24',fontSize:11}}>Sem data</span>}</td>
+                    <td style={S.td}>{days}d</td>
+                    <td style={{...S.td,textAlign:'right',fontWeight:700}}>R$ {dailyVal.toFixed(2)}</td>
+                  </tr>
+                );
+              })}
+              {Object.entries(wmsData).filter(([id, cell]) => cell.loja && selClient && cell.loja.trim().toUpperCase() === selClient.trim().toUpperCase()).length === 0 && (
+                <tr><td colSpan={6} style={{...S.td,textAlign:'center',color:'#8B8D97'}}>Nenhuma posição encontrada para este cliente no WMS.</td></tr>
+              )}
+            </tbody></table>
           </div>
         )}
 
@@ -355,7 +441,7 @@ export default function Billing() {
               <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
                 <div>
                   <h3 style={{fontSize:14,fontWeight:700,color:'#00C896'}}>Controle de Pallets — {selClient}</h3>
-                  <p style={{fontSize:12,color:'#8B8D97',marginTop:4}}>R$ {PRICES.pallet_day.toFixed(2)}/dia por pallet · Mín. {PRICES.min_pallets} pallets (R$ {(PRICES.min_pallets * PRICES.pallet_month).toLocaleString('pt-BR')})</p>
+                  <p style={{fontSize:12,color:'#8B8D97',marginTop:4}}>R$ {PRICES.pallet_day.toFixed(2)}/dia por pallet · Mín. R$ 1.500/mês</p>
                 </div>
                 <button onClick={addPallet} style={S.btnMain}>+ Entrada de Pallet</button>
               </div>
