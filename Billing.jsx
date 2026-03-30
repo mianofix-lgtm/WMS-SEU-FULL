@@ -50,13 +50,19 @@ export default function Billing() {
       // All unique lojas from WMS + clients
       const wms = await getWmsData();
       setWmsData(wms);
-      const lojas = new Set();
-      Object.values(wms).forEach(c => { if (c.loja) lojas.add(c.loja); });
-      allUsers.filter(u => u.role === 'cliente' && u.loja).forEach(u => lojas.add(u.loja));
-      // Also add known internal lojas
-      ['Iscali','Mianofix','Gama','PocianaX'].forEach(l => lojas.add(l));
-      setClients([...lojas].sort());
-      if (lojas.size > 0 && !selClient) setSelClient([...lojas].sort()[0]);
+      // Deduplicate lojas - normalize to title case
+      const lojaMap = {};
+      const addLoja = (name) => {
+        if (!name) return;
+        const key = name.trim().toUpperCase();
+        if (!lojaMap[key]) lojaMap[key] = name.trim();
+      };
+      Object.values(wms).forEach(c => addLoja(c.loja));
+      allUsers.filter(u => u.role === 'cliente' && u.loja).forEach(u => addLoja(u.loja));
+      ['Iscali','Mianofix','Gama','PocianaX'].forEach(l => addLoja(l));
+      const uniqueLojas = Object.values(lojaMap).sort();
+      setClients(uniqueLojas);
+      if (uniqueLojas.length > 0 && !selClient) setSelClient(uniqueLojas[0]);
     } catch(e) { console.error(e); }
     setLoading(false);
   }
@@ -165,7 +171,7 @@ export default function Billing() {
   const clientPositions = useMemo(() => {
     let count = 0;
     Object.values(wmsData).forEach(c => {
-      if (c.loja && selClient && c.loja.toLowerCase().includes(selClient.toLowerCase())) count++;
+      if (c.loja && selClient && c.loja.trim().toUpperCase() === selClient.trim().toUpperCase()) count++;
     });
     return count;
   }, [wmsData, selClient]);
@@ -182,7 +188,19 @@ export default function Billing() {
       }
     });
 
-    const palletCost = pallets.reduce((sum, p) => sum + palletDays(p) * PRICES.pallet_day, 0);
+    // Count WMS positions for this client (auto-detected)
+    const wmsPositions = clientPositions;
+    
+    // Manual pallets with daily tracking
+    const manualPalletCost = pallets.reduce((sum, p) => sum + palletDays(p) * PRICES.pallet_day, 0);
+    
+    // WMS-based: positions * monthly rate
+    const wmsPalletCost = wmsPositions * PRICES.pallet_month;
+    
+    // Use the higher of manual tracking or WMS count
+    const palletCost = Math.max(manualPalletCost, wmsPalletCost);
+    
+    // Minimum: 2 pallets (R$ 700). If usage > minimum, charge usage
     const minPalletCost = PRICES.min_pallets * PRICES.pallet_month;
     const finalPalletCost = Math.max(palletCost, minPalletCost);
 
@@ -238,7 +256,7 @@ export default function Billing() {
           <div style={S.kpi}>
             <div style={S.kpiL}>Pallets (proporcional)</div>
             <div style={S.kpiV}>R$ {totals.finalPalletCost.toLocaleString('pt-BR',{minimumFractionDigits:2})}</div>
-            <div style={{fontSize:10,color:'#8B8D97',marginTop:4}}>{totals.activePallets} ativos · Mín R$ {totals.minPalletCost.toLocaleString('pt-BR',{minimumFractionDigits:0})}</div>
+            <div style={{fontSize:10,color:'#8B8D97',marginTop:4}}>{clientPositions} posições WMS · Mín R$ {totals.minPalletCost.toLocaleString('pt-BR',{minimumFractionDigits:0})}</div>
           </div>
           <div style={S.kpi}>
             <div style={S.kpiL}>Vendas / Serviços</div>
@@ -272,7 +290,7 @@ export default function Billing() {
               </tr></thead>
               <tbody>
                 <tr><td style={S.td}>WMS + Portal</td><td style={{...S.td,textAlign:'right'}}>1</td><td style={{...S.td,textAlign:'right'}}>R$ 2.000,00</td><td style={{...S.td,textAlign:'right',fontWeight:700}}>R$ {totals.wms.toLocaleString('pt-BR',{minimumFractionDigits:2})}</td></tr>
-                <tr><td style={S.td}>Armazenagem (pallets proporcional)</td><td style={{...S.td,textAlign:'right'}}>{pallets.length} pallets</td><td style={{...S.td,textAlign:'right'}}>R$ {PRICES.pallet_day.toFixed(2)}/dia</td><td style={{...S.td,textAlign:'right',fontWeight:700}}>R$ {totals.finalPalletCost.toLocaleString('pt-BR',{minimumFractionDigits:2})}</td></tr>
+                <tr><td style={S.td}>Armazenagem ({clientPositions} posições no WMS{totals.finalPalletCost <= totals.minPalletCost ? ' — mínimo aplicado' : ''})</td><td style={{...S.td,textAlign:'right'}}>{clientPositions} posições</td><td style={{...S.td,textAlign:'right'}}>R$ {PRICES.pallet_month.toFixed(2)}/mês</td><td style={{...S.td,textAlign:'right',fontWeight:700}}>R$ {totals.finalPalletCost.toLocaleString('pt-BR',{minimumFractionDigits:2})}</td></tr>
                 {CHANNELS.map(ch => {
                   const d = totals.salesByChannel[ch];
                   if (!d || d.count === 0) return null;
