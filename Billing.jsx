@@ -23,7 +23,21 @@ const PRICES = {
   devolucao: 2.00,
 };
 
-const CHANNELS = ['Full ML','Flex','Correios','Places','Kit'];
+const CHANNELS = [
+  'Full ML',
+  'Flex', 
+  'Correios',
+  'Places',
+  'Kit',
+  'Montagem Embalagem',
+  'Triagem Devoluções',
+  'SAC',
+  'Retirada de Produtos',
+  'Frete/Coleta',
+  'Hub e ERP',
+  'Coworking',
+  'Outros',
+];
 
 export default function Billing() {
   const { user } = useAuth();
@@ -31,7 +45,7 @@ export default function Billing() {
   const [selClient, setSelClient] = useState(null);
   const [sales, setSales] = useState([]);
   const [pallets, setPallets] = useState([]);
-  const [newSale, setNewSale] = useState({numero:'',produto:'',canal:'Full ML',qtd:'1',kitTier:'small'});
+  const [newSale, setNewSale] = useState({numero:'',produto:'',canal:'Full ML',qtd:'1',kitTier:'small',valorCustom:'',descCustom:''});
   const [loading, setLoading] = useState(true);
   const [month, setMonth] = useState(() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`; });
   const [toast, setToast] = useState('');
@@ -131,22 +145,25 @@ export default function Billing() {
     const sale = {
       id: Date.now().toString(36),
       numero: newSale.numero,
-      produto: newSale.produto,
+      produto: newSale.produto || newSale.descCustom || newSale.canal,
       canal: newSale.canal,
       qtd: parseInt(newSale.qtd) || 1,
       kitTier: newSale.canal === 'Kit' ? newSale.kitTier : null,
+      valorCustom: newSale.valorCustom,
+      descCustom: newSale.descCustom,
       data: new Date().toISOString(),
       valor: calcSaleValue(newSale),
     };
     const next = [sale, ...sales];
     setSales(next);
     await saveClientData(next, pallets);
-    setNewSale({numero:'',produto:'',canal:newSale.canal,qtd:'1',kitTier:'small'});
+    setNewSale({numero:'',produto:'',canal:newSale.canal,qtd:'1',kitTier:'small',valorCustom:'',descCustom:''});
     showToast('Venda registrada!');
   }
 
   function calcSaleValue(s) {
     const q = parseInt(s.qtd) || 1;
+    const custom = parseFloat(s.valorCustom) || 0;
     if (s.canal === 'Full ML') return q * PRICES.full_unit;
     if (s.canal === 'Flex') return PRICES.flex;
     if (s.canal === 'Correios' || s.canal === 'Places') return PRICES.correios_places;
@@ -154,7 +171,11 @@ export default function Billing() {
       const tier = s.kitTier === 'large' ? PRICES.kit_large : s.kitTier === 'medium' ? PRICES.kit_medium : PRICES.kit_small;
       return q * tier;
     }
-    return 0;
+    if (s.canal === 'Montagem Embalagem') return q * 0.50;
+    if (s.canal === 'Triagem Devoluções') return q * PRICES.devolucao;
+    if (s.canal === 'Frete/Coleta') return custom || (q * 50);
+    if (s.canal === 'SAC' || s.canal === 'Retirada de Produtos' || s.canal === 'Hub e ERP' || s.canal === 'Coworking' || s.canal === 'Outros') return custom;
+    return custom;
   }
 
   async function removeSale(id) {
@@ -397,13 +418,17 @@ export default function Billing() {
               <div style={{display:'flex',gap:10,flexWrap:'wrap',alignItems:'flex-end'}}>
                 <div><label style={S.label}>Nº Venda</label><input value={newSale.numero} onChange={e=>setNewSale(f=>({...f,numero:e.target.value}))} style={{...S.input,width:130}} placeholder="MLB-123..." /></div>
                 <div><label style={S.label}>Produto</label><input value={newSale.produto} onChange={e=>setNewSale(f=>({...f,produto:e.target.value}))} style={{...S.input,width:200}} placeholder="Nome do produto" /></div>
-                <div><label style={S.label}>Canal</label><select value={newSale.canal} onChange={e=>setNewSale(f=>({...f,canal:e.target.value}))} style={{...S.input,width:120}}>{CHANNELS.map(c=><option key={c} value={c}>{c}</option>)}</select></div>
+                <div><label style={S.label}>Canal</label><select value={newSale.canal} onChange={e=>setNewSale(f=>({...f,canal:e.target.value}))} style={{...S.input,width:180}}>{CHANNELS.map(c=><option key={c} value={c}>{c}</option>)}</select></div>
                 <div><label style={S.label}>Qtd</label><input type="number" value={newSale.qtd} onChange={e=>setNewSale(f=>({...f,qtd:e.target.value}))} style={{...S.input,width:70}} min="1" /></div>
                 {newSale.canal === 'Kit' && <div><label style={S.label}>Tier Kit</label><select value={newSale.kitTier} onChange={e=>setNewSale(f=>({...f,kitTier:e.target.value}))} style={{...S.input,width:140}}>
                   <option value="small">Pequeno (R$0,50/u)</option>
                   <option value="medium">Médio (R$1,50/u)</option>
                   <option value="large">Grande (R$4,00/u)</option>
                 </select></div>}
+                {['Frete/Coleta','SAC','Retirada de Produtos','Hub e ERP','Coworking','Outros'].includes(newSale.canal) && <>
+                  <div><label style={S.label}>Valor (R$)</label><input type="number" value={newSale.valorCustom} onChange={e=>setNewSale(f=>({...f,valorCustom:e.target.value}))} style={{...S.input,width:110}} placeholder="0.00" step="0.01" /></div>
+                  {newSale.canal === 'Outros' && <div><label style={S.label}>Descrição</label><input value={newSale.descCustom} onChange={e=>setNewSale(f=>({...f,descCustom:e.target.value}))} style={{...S.input,width:160}} placeholder="Descreva o serviço" /></div>}
+                </>}
                 <button onClick={addSale} style={S.btnMain}>+ Registrar</button>
               </div>
             </div>
@@ -421,7 +446,7 @@ export default function Billing() {
                         <td style={{...S.td,fontSize:12,color:'#8B8D97'}}>{new Date(s.data).toLocaleDateString('pt-BR')}</td>
                         <td style={{...S.td,fontFamily:'monospace',fontSize:12}}>{s.numero}</td>
                         <td style={S.td}>{s.produto}</td>
-                        <td style={S.td}><span style={{padding:'2px 8px',borderRadius:4,fontSize:11,fontWeight:700,background: s.canal==='Full ML'?'#00C89620':s.canal==='Flex'?'#3b82f620':s.canal==='Kit'?'#7c3aed20':'#f9731620',color:s.canal==='Full ML'?'#00C896':s.canal==='Flex'?'#3b82f6':s.canal==='Kit'?'#7c3aed':'#f97316'}}>{s.canal}</span></td>
+                        <td style={S.td}><span style={{padding:'2px 8px',borderRadius:4,fontSize:11,fontWeight:700,background: s.canal==='Full ML'?'#00C89620':s.canal==='Flex'?'#3b82f620':s.canal==='Kit'?'#7c3aed20':s.canal==='Frete/Coleta'?'#dc262620':s.canal==='Outros'?'#8B8D9720':'#f9731620',color:s.canal==='Full ML'?'#00C896':s.canal==='Flex'?'#3b82f6':s.canal==='Kit'?'#7c3aed':s.canal==='Frete/Coleta'?'#fca5a5':s.canal==='Outros'?'#C0C2CC':'#f97316'}}>{s.canal}</span></td>
                         <td style={{...S.td,textAlign:'right'}}>{s.qtd}</td>
                         <td style={{...S.td,textAlign:'right',fontWeight:700}}>R$ {(s.valor||0).toFixed(2)}</td>
                         <td style={S.td}><button onClick={()=>removeSale(s.id)} style={S.btnDel}>✕</button></td>
