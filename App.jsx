@@ -1,6 +1,6 @@
 import { useState, useEffect, createContext, useContext } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
-import { onAuth, getPerms } from './firebase.js';
+import { onAuth, getPerms, autoBackup } from './firebase.js';
 import Landing from './Landing.jsx';
 import Login from './Login.jsx';
 import Portal from './Portal.jsx';
@@ -30,6 +30,12 @@ export default function App() {
     const unsub = onAuth((u) => {
       setUser(u);
       setLoading(false);
+      // Auto-backup daily for directors
+      if (u?.role === 'diretor') {
+        autoBackup().then(done => {
+          if (done) console.log('[Seu Full] Backup automático do dia realizado.');
+        });
+      }
     });
     return unsub;
   }, []);

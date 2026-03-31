@@ -167,3 +167,65 @@ export async function getPricing() {
 export async function savePricing(prices) {
   await setDoc(doc(db, 'config', 'pricing'), { ...prices, updatedAt: new Date().toISOString() });
 }
+
+
+// ─── Auto Backup (runs daily for directors) ──────────
+export async function autoBackup() {
+  const today = new Date().toISOString().substring(0,10);
+  try {
+    // Check if already backed up today
+    const check = await getDoc(doc(db, 'backups', today));
+    if (check.exists()) return false; // already done
+
+    // Collect all data
+    const wms = await getWmsData();
+    
+    const usersSnap = await getDocs(collection(db, 'users'));
+    const users = {};
+    usersSnap.forEach(d => { users[d.id] = d.data(); });
+
+    const billingSnap = await getDocs(collection(db, 'billing'));
+    const billing = {};
+    billingSnap.forEach(d => { billing[d.id] = d.data(); });
+
+    const coletaDoc = await getDoc(doc(db, 'wms', 'coletas')).catch(()=>null);
+    const coletas = coletaDoc?.exists?.() ? coletaDoc.data() : {};
+
+    const pricingDoc = await getDoc(doc(db, 'config', 'pricing')).catch(()=>null);
+    const pricing = pricingDoc?.exists?.() ? pricingDoc.data() : {};
+
+    const costsDoc = await getDoc(doc(db, 'config', 'costs')).catch(()=>null);
+    const costs = costsDoc?.exists?.() ? costsDoc.data() : {};
+
+    // Save backup
+    await setDoc(doc(db, 'backups', today), {
+      date: new Date().toISOString(),
+      auto: true,
+      wms: JSON.stringify(wms),
+      users: JSON.stringify(users),
+      billing: JSON.stringify(billing),
+      coletas: JSON.stringify(coletas),
+      pricing: JSON.stringify(pricing),
+      costs: JSON.stringify(costs),
+    });
+
+    await setDoc(doc(db, 'config', 'lastBackup'), { date: new Date().toISOString(), auto: true });
+
+    // Clean old backups (keep last 30 days)
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - 30);
+    const cutoffStr = cutoff.toISOString().substring(0,10);
+    const backupsSnap = await getDocs(collection(db, 'backups'));
+    backupsSnap.forEach(async (d) => {
+      if (d.id < cutoffStr) {
+        try { await deleteDoc(doc(db, 'backups', d.id)); } catch(e) {}
+      }
+    });
+
+    console.log('[Seu Full] Auto-backup realizado:', today);
+    return true;
+  } catch(e) {
+    console.error('[Seu Full] Erro no auto-backup:', e);
+    return false;
+  }
+}

@@ -2,8 +2,8 @@ import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from './App.jsx';
 import { LOGO_ICON } from './logo.js';
-import { getAllUsers, approveUser, rejectUser, db, getPricing, savePricing, DEFAULT_PRICES } from './firebase.js';
-import { doc, updateDoc, deleteDoc } from 'firebase/firestore';
+import { getAllUsers, approveUser, rejectUser, db, getPricing, savePricing, DEFAULT_PRICES, getWmsData } from './firebase.js';
+import { doc, updateDoc, deleteDoc, collection, getDocs, getDoc, setDoc } from 'firebase/firestore';
 
 export default function Admin() {
   const { user } = useAuth();
@@ -17,8 +17,12 @@ export default function Admin() {
   const [prices, setPrices] = useState(DEFAULT_PRICES);
   const [pricesTab, setPricesTab] = useState(false);
   const [pricesSaved, setPricesSaved] = useState(false);
+  const [backingUp, setBackingUp] = useState(false);
+  const [lastBackup, setLastBackup] = useState(null);
 
-  useEffect(() => { loadUsers(); loadPrices(); }, []);
+  useEffect(() => { loadUsers(); loadPrices(); loadLastBackup(); }, []);
+
+  async function loadLastBackup() { try { const d = await getDoc(doc(db,'config','lastBackup')); if (d.exists()) setLastBackup(d.data().date); } catch(e){} }
 
   async function loadPrices() { const p = await getPricing(); setPrices(p); }
   async function handleSavePrices() { await savePricing(prices); setPricesSaved(true); setTimeout(()=>setPricesSaved(false),3000); showToast('Preços atualizados!'); }
@@ -173,6 +177,38 @@ export default function Admin() {
           </div>
         </div>
       )}
+
+      {/* ─── BACKUP ─── */}
+      <div style={{marginTop:40,marginBottom:20}}>
+        <button onClick={()=>document.getElementById('backupSection').style.display=document.getElementById('backupSection').style.display==='none'?'block':'none'} style={{padding:'10px 24px',background:'#161820',color:'#3b82f6',border:'1px solid #1E2028',borderRadius:8,fontWeight:700,cursor:'pointer',fontFamily:'inherit',fontSize:14}}>
+          ► Backup & Restauração
+        </button>
+      </div>
+
+      <div id="backupSection" style={{display:'none'}}>
+        <div style={{background:'#0F1117',border:'1px solid #1E2028',borderRadius:14,padding:24,marginBottom:32}}>
+          <h2 style={{fontSize:18,fontWeight:800,marginBottom:4}}>Backup dos Dados</h2>
+          <p style={{color:'#8B8D97',fontSize:13,marginBottom:12}}>Backup automático roda todos os dias quando você acessa o sistema. Backups dos últimos 30 dias ficam salvos no Firebase. Use o botão abaixo pra baixar uma cópia pro seu computador.</p>
+          <div style={{padding:'10px 14px',background:'#00C89610',border:'1px solid #00C89630',borderRadius:8,marginBottom:16,fontSize:12}}><span style={{color:'#00C896',fontWeight:700}}>✓ Backup automático ativo</span> — Todo dia ao acessar o sistema, os dados são salvos automaticamente. Últimos 30 dias mantidos.</div>
+          
+          {lastBackup && <p style={{fontSize:12,color:'#8B8D97',marginBottom:12}}>Último backup: <span style={{color:'#00C896',fontWeight:600}}>{new Date(lastBackup).toLocaleString('pt-BR')}</span></p>}
+          
+          <div style={{display:'flex',gap:12,flexWrap:'wrap'}}>
+            <button onClick={doBackup} disabled={backingUp} style={{padding:'12px 32px',background:'#3b82f6',color:'#fff',border:'none',borderRadius:8,fontWeight:700,cursor:'pointer',fontFamily:'inherit',fontSize:14}}>
+              {backingUp ? '⏳ Fazendo backup...' : '💾 Fazer Backup Agora'}
+            </button>
+            
+            <label style={{padding:'12px 24px',background:'transparent',color:'#fbbf24',border:'1px solid #fbbf2440',borderRadius:8,fontWeight:700,cursor:'pointer',fontFamily:'inherit',fontSize:14}}>
+              ⚠ Restaurar Backup
+              <input type="file" accept=".json" onChange={e=>{if(e.target.files[0])restoreBackup(e.target.files[0]);}} style={{display:'none'}} />
+            </label>
+          </div>
+          
+          <div style={{marginTop:16,padding:12,background:'#dc262610',border:'1px solid #dc262630',borderRadius:8}}>
+            <p style={{fontSize:12,color:'#fca5a5',fontWeight:600}}>⚠ Restaurar um backup SUBSTITUI todos os dados atuais. Use apenas em caso de emergência.</p>
+          </div>
+        </div>
+      </div>
 
       {toast && <div style={{position:'fixed',bottom:24,right:24,padding:'14px 24px',background:'#00C896',color:'#2E2C3A',fontWeight:700,borderRadius:10,fontSize:14,zIndex:300}}>{toast}</div>}
       <style>{`@keyframes pulse{0%,100%{opacity:1;}50%{opacity:.4;}}`}</style>
