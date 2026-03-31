@@ -39,11 +39,21 @@ export default function Portal() {
   const stockItems = useMemo(() => {
     const items = [];
     for (const [id, cell] of Object.entries(cells)) {
-      if (!cell || !cell.nome) continue;
-      // Client sees only their loja, internal sees all
-      if (!isInternal && clientLoja && !cell.loja?.toLowerCase().includes(clientLoja.toLowerCase())) continue;
-      if (search && !cell.nome.toLowerCase().includes(search.toLowerCase()) && !cell.sku?.toLowerCase().includes(search.toLowerCase())) continue;
-      items.push({ id, ...cell });
+      if (!cell) continue;
+      // Check if has any content
+      const prods = cell.produtos && cell.produtos.length > 0 && cell.produtos[0].nome
+        ? cell.produtos.filter(p => p.nome || p.sku)
+        : cell.nome ? [{sku: cell.sku, nome: cell.nome, qtd: cell.qtd, valorUnit: cell.valorUnit, curva: cell.curva}]
+        : cell.descricao ? [{sku: '', nome: cell.descricao, qtd: cell.qtd, valorUnit: cell.valorUnit, curva: ''}]
+        : [];
+      if (prods.length === 0) continue;
+      // Client sees only their loja
+      if (!isInternal && clientLoja && !cell.loja?.trim().toUpperCase().includes(clientLoja.trim().toUpperCase())) continue;
+      // Expand each product
+      for (const prod of prods) {
+        if (search && !(prod.nome||'').toLowerCase().includes(search.toLowerCase()) && !(prod.sku||'').toLowerCase().includes(search.toLowerCase())) continue;
+        items.push({ id, loja: cell.loja, ...prod });
+      }
     }
     return items.sort((a, b) => (a.nome || '').localeCompare(b.nome || ''));
   }, [cells, search, isInternal, clientLoja]);

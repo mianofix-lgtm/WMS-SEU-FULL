@@ -66,14 +66,12 @@ export default function Billing() {
       // Check for positions missing info
       const warnings = [];
       Object.entries(wms).forEach(([id, cell]) => {
-        if (cell.loja && (!cell.nome && !cell.descricao)) {
+        const hasContent = cell.nome || cell.descricao || (cell.produtos && cell.produtos.length > 0 && cell.produtos[0].nome);
+        if (cell.loja && !hasContent) {
           warnings.push({id, loja: cell.loja, issue: 'Sem nome do produto'});
         }
-        if ((cell.nome || cell.descricao) && !cell.loja) {
+        if (hasContent && !cell.loja) {
           warnings.push({id, loja: '-', issue: 'Sem loja definida'});
-        }
-        if ((cell.nome || cell.descricao) && !cell.qtd) {
-          warnings.push({id, loja: cell.loja || '-', issue: 'Sem quantidade'});
         }
       });
       setPositionWarnings(warnings);
@@ -205,7 +203,8 @@ export default function Billing() {
       const entry = cell.dataEntrada ? new Date(cell.dataEntrada) : null;
       const days = entry ? Math.max(1, Math.ceil((new Date() - entry) / (86400000))) : 30;
       const val = days * PRICES.pallet_day;
-      return `<tr><td>${id}</td><td>${cell.nome||cell.descricao||'-'}</td><td style="text-align:center">${cell.qtd||'-'}</td><td style="text-align:center">${entry?entry.toLocaleDateString('pt-BR'):'-'}</td><td style="text-align:center">${days}d</td><td style="text-align:right">R$ ${val.toFixed(2)}</td></tr>`;
+      const prodNames = cell.produtos && cell.produtos[0]?.nome ? cell.produtos.map(p=>`${p.nome} (${p.qtd||0})`).join(', ') : `${cell.nome||cell.descricao||'-'} (${cell.qtd||0})`;
+      return `<tr><td>${id}</td><td>${prodNames}</td><td style="text-align:center">${cell.produtos ? cell.produtos.reduce((s,p)=>s+(parseInt(p.qtd)||0),0) : cell.qtd||'-'}</td><td style="text-align:center">${entry?entry.toLocaleDateString('pt-BR'):'-'}</td><td style="text-align:center">${days}d</td><td style="text-align:right">R$ ${val.toFixed(2)}</td></tr>`;
     }).join('');
 
     // Sales rows grouped by channel
@@ -419,12 +418,9 @@ tr:nth-child(even){background:#fafafa;}
             <label style={S.label}>Mês de referência</label>
             <input type="month" value={month} onChange={e=>setMonth(e.target.value)} style={S.input} />
           </div>
-          <div style={{marginLeft:'auto',display:'flex',gap:16,alignItems:'flex-end'}}>
-            <div style={{textAlign:'right'}}>
-              <div style={S.label}>Posições no WMS</div>
-              <div style={{fontSize:24,fontWeight:900,color:'#00C896'}}>{clientPositions}</div>
-            </div>
-            <button onClick={generatePDF} style={{padding:'12px 24px',background:'#2E2C3A',color:'#fff',border:'1px solid #1E2028',borderRadius:8,fontWeight:700,cursor:'pointer',fontFamily:'inherit',fontSize:13,whiteSpace:'nowrap'}}>📄 Gerar Relatório</button>
+          <div style={{marginLeft:'auto',textAlign:'right'}}>
+            <div style={S.label}>Posições no WMS</div>
+            <div style={{fontSize:24,fontWeight:900,color:'#00C896'}}>{clientPositions}</div>
           </div>
         </div>
 
@@ -448,6 +444,11 @@ tr:nth-child(even){background:#fafafa;}
             <div style={S.kpiL}>TOTAL MÊS</div>
             <div style={{fontSize:28,fontWeight:900,color:'#00C896',marginTop:4}}>R$ {totals.total.toLocaleString('pt-BR',{minimumFractionDigits:2})}</div>
           </div>
+        </div>
+
+        {/* Generate report button */}
+        <div style={{marginBottom:16}}>
+          <button onClick={generatePDF} style={{padding:'14px 32px',background:'#2E2C3A',color:'#fff',border:'2px solid #00C896',borderRadius:10,fontWeight:700,cursor:'pointer',fontFamily:'inherit',fontSize:15,display:'flex',alignItems:'center',gap:10}}>📄 Gerar Relatório PDF — {selClient}</button>
         </div>
 
         {/* Auto Full info */}
@@ -510,8 +511,8 @@ tr:nth-child(even){background:#fafafa;}
                 return (
                   <tr key={id}>
                     <td style={{...S.td,fontFamily:'monospace',color:'#00C896',fontWeight:700,fontSize:12}}>{id}</td>
-                    <td style={S.td}>{cell.nome || cell.descricao || '-'}</td>
-                    <td style={S.td}>{cell.qtd || '-'}</td>
+                    <td style={S.td}>{cell.produtos && cell.produtos[0]?.nome ? cell.produtos.map(p=>p.nome).join(', ') : cell.nome || cell.descricao || '-'}</td>
+                    <td style={S.td}>{cell.produtos ? cell.produtos.reduce((s,p)=>s+(parseInt(p.qtd)||0),0) : cell.qtd || '-'}</td>
                     <td style={S.td}>{entryDate ? entryDate.toLocaleDateString('pt-BR') : <span style={{color:'#fbbf24',fontSize:11}}>Sem data</span>}</td>
                     <td style={S.td}>{days}d</td>
                     <td style={{...S.td,textAlign:'right',fontWeight:700}}>R$ {dailyVal.toFixed(2)}</td>
