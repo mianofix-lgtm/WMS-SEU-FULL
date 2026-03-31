@@ -30,7 +30,8 @@ export default function Billing() {
   const [selClient, setSelClient] = useState(null);
   const [sales, setSales] = useState([]);
   const [pallets, setPallets] = useState([]);
-  const [newSale, setNewSale] = useState({numero:'',produto:'',canal:'Full ML',qtd:'1',kitTier:'small',valorCustom:'',descCustom:''});
+  const [newSale, setNewSale] = useState({numero:'',produto:'',canal:'Full ML',qtd:'1',kitTier:'small',valorCustom:'',descCustom:'',dataVenda:'',numEnvio:''});
+  const [editingSale, setEditingSale] = useState(null);
   const [loading, setLoading] = useState(true);
   const [month, setMonth] = useState(() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`; });
   const [toast, setToast] = useState('');
@@ -127,9 +128,9 @@ export default function Billing() {
 
   // ─── Sales ───
   async function addSale() {
-    if (!newSale.numero || !newSale.produto) { showToast('Preencha número e produto'); return; }
+    if (!newSale.produto && !newSale.descCustom) { showToast('Preencha o produto'); return; }
     const sale = {
-      id: Date.now().toString(36),
+      id: editingSale || Date.now().toString(36),
       numero: newSale.numero,
       produto: newSale.produto || newSale.descCustom || newSale.canal,
       canal: newSale.canal,
@@ -137,14 +138,17 @@ export default function Billing() {
       kitTier: newSale.canal === 'Kit' ? newSale.kitTier : null,
       valorCustom: newSale.valorCustom,
       descCustom: newSale.descCustom,
-      data: new Date().toISOString(),
+      dataVenda: newSale.dataVenda || '',
+      numEnvio: newSale.numEnvio || '',
+      data: newSale.dataVenda ? new Date(newSale.dataVenda+'T12:00:00').toISOString() : new Date().toISOString(),
       valor: calcSaleValue(newSale),
     };
-    const next = [sale, ...sales];
+    const next = editingSale ? sales.map(s => s.id === editingSale ? sale : s) : [sale, ...sales];
     setSales(next);
     await saveClientData(next, pallets);
-    setNewSale({numero:'',produto:'',canal:newSale.canal,qtd:'1',kitTier:'small',valorCustom:'',descCustom:''});
-    showToast('Venda registrada!');
+    setNewSale({numero:'',produto:'',canal:newSale.canal,qtd:'1',kitTier:'small',valorCustom:'',descCustom:'',dataVenda:'',numEnvio:''});
+    setEditingSale(null);
+    showToast(editingSale ? 'Venda atualizada!' : 'Venda registrada!');
   }
 
   function calcSaleValue(s) {
@@ -162,6 +166,22 @@ export default function Billing() {
     if (s.canal === 'Frete/Coleta') return custom || (q * 50);
     if (s.canal === 'SAC' || s.canal === 'Retirada de Produtos' || s.canal === 'Hub e ERP' || s.canal === 'Coworking' || s.canal === 'Outros') return custom;
     return custom;
+  }
+
+  function editSale(s) {
+    setEditingSale(s.id);
+    setNewSale({
+      numero: s.numero || '',
+      produto: s.produto || '',
+      canal: s.canal || 'Full ML',
+      qtd: String(s.qtd || 1),
+      kitTier: s.kitTier || 'small',
+      valorCustom: s.valorCustom || '',
+      descCustom: s.descCustom || '',
+      dataVenda: s.dataVenda || (s.data ? s.data.substring(0,10) : ''),
+      numEnvio: s.numEnvio || '',
+    });
+    showToast('Editando lançamento...');
   }
 
   async function removeSale(id) {
@@ -216,8 +236,9 @@ export default function Billing() {
       channelTotals[s.canal].valor += s.valor||0;
     });
 
-    const serviceRows = Object.entries(channelTotals).map(([ch, d]) => 
-      `<tr><td>${ch}</td><td style="text-align:center">${d.units}</td><td style="text-align:center">${d.count}</td><td style="text-align:right">R$ ${d.valor.toLocaleString('pt-BR',{minimumFractionDigits:2})}</td></tr>`
+    // Detailed sales for PDF
+    const detailRows = sales.map(s => 
+      `<tr><td style="font-size:11px;color:#666">${s.dataVenda ? new Date(s.dataVenda+'T12:00:00').toLocaleDateString('pt-BR') : new Date(s.data).toLocaleDateString('pt-BR')}</td><td style="font-family:monospace;font-size:11px">${s.numero||'-'}</td><td style="font-family:monospace;font-size:11px;color:#1e3a5f">${s.numEnvio||'-'}</td><td>${s.canal}</td><td>${s.produto||'-'}</td><td style="text-align:right">${s.qtd}</td><td style="text-align:right;font-weight:700">R$ ${(s.valor||0).toFixed(2)}</td></tr>`
     ).join('');
 
     const monthLabel = new Date(month+'-15').toLocaleDateString('pt-BR',{month:'long',year:'numeric'});
@@ -289,11 +310,11 @@ tr:nth-child(even){background:#fafafa;}
 <div class="section">
   <h2>Serviços Prestados</h2>
   <table>
-    <thead><tr><th>Serviço</th><th style="text-align:center">Unidades</th><th style="text-align:center">Lançamentos</th><th style="text-align:right">Total</th></tr></thead>
+    <thead><tr><th>Data</th><th>Nº Venda</th><th>Nº Envio</th><th>Canal</th><th>Produto</th><th style="text-align:right">Qtd</th><th style="text-align:right">Valor</th></tr></thead>
     <tbody>
-      <tr><td>Sistema WMS + Portal</td><td style="text-align:center">1</td><td style="text-align:center">Fixo</td><td style="text-align:right">R$ ${totals.wms.toLocaleString('pt-BR',{minimumFractionDigits:2})}</td></tr>
-      ${serviceRows}
-      <tr class="total-row"><td colspan="3">Subtotal Serviços</td><td style="text-align:right">R$ ${(totals.salesTotal + totals.wms).toLocaleString('pt-BR',{minimumFractionDigits:2})}</td></tr>
+      <tr><td colspan="4">Sistema WMS + Portal</td><td>Fixo mensal</td><td style="text-align:right">1</td><td style="text-align:right;font-weight:700">R$ ${totals.wms.toLocaleString('pt-BR',{minimumFractionDigits:2})}</td></tr>
+      ${detailRows}
+      <tr class="total-row"><td colspan="6">Subtotal Serviços</td><td style="text-align:right">R$ ${(totals.salesTotal + totals.wms).toLocaleString('pt-BR',{minimumFractionDigits:2})}</td></tr>
     </tbody>
   </table>
 </div>
@@ -533,8 +554,10 @@ tr:nth-child(even){background:#fafafa;}
             <div style={{...S.card,marginBottom:16}}>
               <h3 style={{fontSize:14,fontWeight:700,color:'#00C896',marginBottom:12}}>Registrar Venda / Serviço</h3>
               <div style={{display:'flex',gap:10,flexWrap:'wrap',alignItems:'flex-end'}}>
-                <div><label style={S.label}>Nº Venda</label><input value={newSale.numero} onChange={e=>setNewSale(f=>({...f,numero:e.target.value}))} style={{...S.input,width:130}} placeholder="MLB-123..." /></div>
-                <div><label style={S.label}>Produto</label><input value={newSale.produto} onChange={e=>setNewSale(f=>({...f,produto:e.target.value}))} style={{...S.input,width:200}} placeholder="Nome do produto" /></div>
+                <div><label style={S.label}>Data Venda</label><input type="date" value={newSale.dataVenda} onChange={e=>setNewSale(f=>({...f,dataVenda:e.target.value}))} style={{...S.input,width:140}} /></div>
+                <div><label style={S.label}>Nº Venda/Pedido</label><input value={newSale.numero} onChange={e=>setNewSale(f=>({...f,numero:e.target.value}))} style={{...S.input,width:140}} placeholder="MLB-123..." /></div>
+                <div><label style={S.label}>Nº Envio/Frete</label><input value={newSale.numEnvio} onChange={e=>setNewSale(f=>({...f,numEnvio:e.target.value}))} style={{...S.input,width:140}} placeholder="Nº envio..." /></div>
+                <div><label style={S.label}>Produto</label><input value={newSale.produto} onChange={e=>setNewSale(f=>({...f,produto:e.target.value}))} style={{...S.input,width:180}} placeholder="Nome do produto" /></div>
                 <div><label style={S.label}>Canal</label><select value={newSale.canal} onChange={e=>setNewSale(f=>({...f,canal:e.target.value}))} style={{...S.input,width:180}}>{CHANNELS.map(c=><option key={c} value={c}>{c}</option>)}</select></div>
                 <div><label style={S.label}>Qtd</label><input type="number" value={newSale.qtd} onChange={e=>setNewSale(f=>({...f,qtd:e.target.value}))} style={{...S.input,width:70}} min="1" /></div>
                 {newSale.canal === 'Kit' && <div><label style={S.label}>Tier Kit</label><select value={newSale.kitTier} onChange={e=>setNewSale(f=>({...f,kitTier:e.target.value}))} style={{...S.input,width:140}}>
@@ -546,7 +569,8 @@ tr:nth-child(even){background:#fafafa;}
                   <div><label style={S.label}>Valor (R$)</label><input type="number" value={newSale.valorCustom} onChange={e=>setNewSale(f=>({...f,valorCustom:e.target.value}))} style={{...S.input,width:110}} placeholder="0.00" step="0.01" /></div>
                   {newSale.canal === 'Outros' && <div><label style={S.label}>Descrição</label><input value={newSale.descCustom} onChange={e=>setNewSale(f=>({...f,descCustom:e.target.value}))} style={{...S.input,width:160}} placeholder="Descreva o serviço" /></div>}
                 </>}
-                <button onClick={addSale} style={S.btnMain}>+ Registrar</button>
+                <button onClick={addSale} style={{...S.btnMain,background:editingSale?'#fbbf24':'#00C896'}}>{editingSale ? '✓ Salvar Edição' : '+ Registrar'}</button>
+                {editingSale && <button onClick={()=>{setEditingSale(null);setNewSale({numero:'',produto:'',canal:'Full ML',qtd:'1',kitTier:'small',valorCustom:'',descCustom:'',dataVenda:'',numEnvio:''});}} style={{padding:'10px 16px',background:'transparent',border:'1px solid #1E2028',borderRadius:8,color:'#8B8D97',cursor:'pointer',fontFamily:'inherit',fontSize:12}}>Cancelar</button>}
               </div>
             </div>
 
@@ -556,17 +580,18 @@ tr:nth-child(even){background:#fafafa;}
               {sales.length === 0 ? <div style={{color:'#8B8D97',padding:20,textAlign:'center'}}>Nenhuma venda registrada neste mês.</div> : (
                 <div style={{maxHeight:400,overflowY:'auto'}}>
                   <table style={S.table}><thead><tr>
-                    <th style={S.th}>Data</th><th style={S.th}>Nº Venda</th><th style={S.th}>Produto</th><th style={S.th}>Canal</th><th style={{...S.th,textAlign:'right'}}>Qtd</th><th style={{...S.th,textAlign:'right'}}>Valor</th><th style={S.th}></th>
+                    <th style={S.th}>Data</th><th style={S.th}>Nº Venda</th><th style={S.th}>Nº Envio</th><th style={S.th}>Produto</th><th style={S.th}>Canal</th><th style={{...S.th,textAlign:'right'}}>Qtd</th><th style={{...S.th,textAlign:'right'}}>Valor</th><th style={S.th}></th>
                   </tr></thead><tbody>
                     {sales.map(s => (
-                      <tr key={s.id}>
-                        <td style={{...S.td,fontSize:12,color:'#8B8D97'}}>{new Date(s.data).toLocaleDateString('pt-BR')}</td>
+                      <tr key={s.id} style={{background:editingSale===s.id?'#fbbf2410':'transparent'}}>
+                        <td style={{...S.td,fontSize:12,color:'#8B8D97'}}>{s.dataVenda ? new Date(s.dataVenda+'T12:00:00').toLocaleDateString('pt-BR') : new Date(s.data).toLocaleDateString('pt-BR')}</td>
                         <td style={{...S.td,fontFamily:'monospace',fontSize:12}}>{s.numero}</td>
+                        <td style={{...S.td,fontFamily:'monospace',fontSize:12,color:'#93c5fd'}}>{s.numEnvio||'-'}</td>
                         <td style={S.td}>{s.produto}</td>
                         <td style={S.td}><span style={{padding:'2px 8px',borderRadius:4,fontSize:11,fontWeight:700,background: s.canal==='Full ML'?'#00C89620':s.canal==='Flex'?'#3b82f620':s.canal==='Kit'?'#7c3aed20':s.canal==='Frete/Coleta'?'#dc262620':s.canal==='Outros'?'#8B8D9720':'#f9731620',color:s.canal==='Full ML'?'#00C896':s.canal==='Flex'?'#3b82f6':s.canal==='Kit'?'#7c3aed':s.canal==='Frete/Coleta'?'#fca5a5':s.canal==='Outros'?'#C0C2CC':'#f97316'}}>{s.canal}</span></td>
                         <td style={{...S.td,textAlign:'right'}}>{s.qtd}</td>
                         <td style={{...S.td,textAlign:'right',fontWeight:700}}>R$ {(s.valor||0).toFixed(2)}</td>
-                        <td style={S.td}><button onClick={()=>removeSale(s.id)} style={S.btnDel}>✕</button></td>
+                        <td style={S.td}><div style={{display:'flex',gap:4}}><button onClick={()=>editSale(s)} style={{padding:'4px 8px',background:'#1e3a5f',border:'none',borderRadius:4,color:'#93c5fd',fontSize:11,cursor:'pointer',fontFamily:'inherit'}}>✎</button><button onClick={()=>removeSale(s.id)} style={S.btnDel}>✕</button></div></td>
                       </tr>
                     ))}
                   </tbody></table>
