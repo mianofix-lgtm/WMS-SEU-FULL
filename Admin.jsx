@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from './App.jsx';
 import { LOGO_ICON } from './logo.js';
-import { getAllUsers, approveUser, rejectUser, db, getPricing, savePricing, DEFAULT_PRICES, getWmsData } from './firebase.js';
+import { getAllUsers, approveUser, rejectUser, db, getPricing, savePricing, DEFAULT_PRICES, getWmsData, logAction, getLogs } from './firebase.js';
 import { doc, updateDoc, deleteDoc, collection, getDocs, getDoc, setDoc } from 'firebase/firestore';
 
 export default function Admin() {
@@ -18,14 +18,63 @@ export default function Admin() {
   const [pricesTab, setPricesTab] = useState(false);
   const [pricesSaved, setPricesSaved] = useState(false);
   const [backingUp, setBackingUp] = useState(false);
+  const [logs, setLogs] = useState([]);
+  const [showLogs, setShowLogs] = useState(false);
   const [lastBackup, setLastBackup] = useState(null);
 
   useEffect(() => { loadUsers(); loadPrices(); loadLastBackup(); }, []);
 
+  async function loadLogs() { const l = await getLogs(200); setLogs(l); }
+
   async function loadLastBackup() { try { const d = await getDoc(doc(db,'config','lastBackup')); if (d.exists()) setLastBackup(d.data().date); } catch(e){} }
 
+  async function doBackup() {
+    setBackingUp(true);
+    try {
+      const wms = await getWmsData();
+      const usersSnap = await getDocs(collection(db, 'users'));
+      const usersData = {}; usersSnap.forEach(d => { usersData[d.id] = d.data(); });
+      const billingSnap = await getDocs(collection(db, 'billing'));
+      const billingData = {}; billingSnap.forEach(d => { billingData[d.id] = d.data(); });
+      const coletaDoc = await getDoc(doc(db, 'wms', 'coletas'));
+      const coletas = coletaDoc.exists() ? coletaDoc.data() : {};
+      const pricingDoc = await getDoc(doc(db, 'config', 'pricing'));
+      const pricing = pricingDoc.exists() ? pricingDoc.data() : {};
+      const costsDoc = await getDoc(doc(db, 'config', 'costs'));
+      const costs = costsDoc.exists() ? costsDoc.data() : {};
+      const backup = { version:'1.0', date:new Date().toISOString(), wms, users:usersData, billing:billingData, coletas, pricing, costs };
+      const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a'); a.href = url; a.download = `backup-seufull-${new Date().toISOString().substring(0,10)}.json`; a.click();
+      URL.revokeObjectURL(url);
+      await setDoc(doc(db, 'backups', new Date().toISOString().substring(0,10)), { date:new Date().toISOString(), wms:JSON.stringify(wms), users:JSON.stringify(usersData), billing:JSON.stringify(billingData), coletas:JSON.stringify(coletas), pricing:JSON.stringify(pricing), costs:JSON.stringify(costs) });
+      await setDoc(doc(db, 'config', 'lastBackup'), { date: new Date().toISOString() });
+      setLastBackup(new Date().toISOString());
+      showToast('Backup realizado!');
+      logAction(user, 'BACKUP', 'Backup manual realizado');
+    } catch(e) { showToast('Erro no backup: ' + e.message); }
+    setBackingUp(false);
+  }
+
+  async function restoreBackup(file) {
+    if (!confirm('ATENÇÃO: Isso vai SUBSTITUIR todos os dados atuais. Tem certeza?')) return;
+    if (!confirm('Última confirmação. Continuar?')) return;
+    try {
+      const text = await file.text(); const data = JSON.parse(text);
+      if (!data.version || !data.wms) { showToast('Arquivo inválido'); return; }
+      const { saveWmsData } = await import('./firebase.js');
+      if (data.wms) await saveWmsData(data.wms);
+      if (data.pricing) await setDoc(doc(db, 'config', 'pricing'), data.pricing);
+      if (data.costs) await setDoc(doc(db, 'config', 'costs'), data.costs);
+      if (data.coletas) await setDoc(doc(db, 'wms', 'coletas'), data.coletas);
+      if (data.billing) { for (const [id, val] of Object.entries(data.billing)) { await setDoc(doc(db, 'billing', id), val); } }
+      showToast('Backup restaurado! Recarregue a página.');
+      logAction(user, 'RESTORE', 'Backup restaurado de ' + data.date);
+    } catch(e) { showToast('Erro: ' + e.message); }
+  }
+
   async function loadPrices() { const p = await getPricing(); setPrices(p); }
-  async function handleSavePrices() { await savePricing(prices); setPricesSaved(true); setTimeout(()=>setPricesSaved(false),3000); showToast('Preços atualizados!'); }
+  async function handleSavePrices() { await savePricing(prices); setPricesSaved(true); setTimeout(()=>setPricesSaved(false),3000); showToast('Preços atualizados!'); logAction(user, 'PRICING_UPDATE', 'Tabela de preços atualizada'); }
 
   async function loadUsers() {
     setLoading(true);
@@ -37,7 +86,7 @@ export default function Admin() {
 
   async function handleApprove() {
     if (!lojaInput.trim()) return;
-    try { await approveUser(approveModal.uid, lojaInput.trim()); showToast(`${approveModal.nome||approveModal.email} aprovado!`); setApproveModal(null); setLojaInput(''); loadUsers(); } catch(e) { showToast('Erro: '+e.message); }
+    try { await approveUser(approveModal.uid, lojaInput.trim()); showToast(`${approveModal.nome||approveModal.email} aprovado!`); logAction(user, 'USER_APPROVE', `${approveModal.nome||approveModal.email} aprovado como ${lojaInput}`); setApproveModal(null); setLojaInput(''); loadUsers(); } catch(e) { showToast('Erro: '+e.message); }
   }
 
   async function handleReject(u) {
@@ -174,6 +223,48 @@ export default function Admin() {
             <button onClick={handleSavePrices} style={{padding:'12px 32px',background:'#00C896',color:'#2E2C3A',border:'none',borderRadius:8,fontWeight:700,cursor:'pointer',fontFamily:'inherit',fontSize:14}}>Salvar Preços →</button>
             <button onClick={()=>{setPrices({...DEFAULT_PRICES});}} style={{padding:'12px 24px',background:'transparent',color:'#8B8D97',border:'1px solid #1E2028',borderRadius:8,cursor:'pointer',fontFamily:'inherit',fontSize:13}}>Restaurar Padrão</button>
             {pricesSaved && <span style={{color:'#00C896',fontWeight:600,fontSize:13}}>✓ Salvo!</span>}
+          </div>
+        </div>
+      )}
+
+      {/* ─── LOG DE AÇÕES ─── */}
+      <div style={{marginTop:40,marginBottom:20}}>
+        <button onClick={()=>{setShowLogs(!showLogs);if(!showLogs)loadLogs();}} style={{padding:'10px 24px',background:showLogs?'#7c3aed':'#161820',color:showLogs?'#fff':'#7c3aed',border:'1px solid #1E2028',borderRadius:8,fontWeight:700,cursor:'pointer',fontFamily:'inherit',fontSize:14}}>
+          {showLogs ? '▼ Log de Ações' : '► Log de Ações (Auditoria)'}
+        </button>
+      </div>
+
+      {showLogs && (
+        <div style={{background:'#0F1117',border:'1px solid #1E2028',borderRadius:14,padding:24,marginBottom:32}}>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:16}}>
+            <h2 style={{fontSize:18,fontWeight:800}}>Log de Ações</h2>
+            <button onClick={loadLogs} style={{padding:'6px 16px',background:'#161820',border:'1px solid #1E2028',borderRadius:6,color:'#8B8D97',fontSize:12,cursor:'pointer',fontFamily:'inherit'}}>↻ Atualizar</button>
+          </div>
+          <div style={{maxHeight:500,overflowY:'auto'}}>
+            <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
+              <thead><tr>
+                <th style={{textAlign:'left',padding:'8px 10px',borderBottom:'1px solid #1E2028',fontSize:10,fontWeight:700,color:'#8B8D97',textTransform:'uppercase'}}>Data/Hora</th>
+                <th style={{textAlign:'left',padding:'8px 10px',borderBottom:'1px solid #1E2028',fontSize:10,fontWeight:700,color:'#8B8D97',textTransform:'uppercase'}}>Usuário</th>
+                <th style={{textAlign:'left',padding:'8px 10px',borderBottom:'1px solid #1E2028',fontSize:10,fontWeight:700,color:'#8B8D97',textTransform:'uppercase'}}>Ação</th>
+                <th style={{textAlign:'left',padding:'8px 10px',borderBottom:'1px solid #1E2028',fontSize:10,fontWeight:700,color:'#8B8D97',textTransform:'uppercase'}}>Detalhes</th>
+              </tr></thead>
+              <tbody>
+                {logs.length === 0 ? (
+                  <tr><td colSpan={4} style={{textAlign:'center',color:'#8B8D97',padding:20}}>Nenhum log encontrado.</td></tr>
+                ) : logs.map(l => {
+                  const dt = new Date(l.timestamp);
+                  const actionColors = {WMS_SAVE:'#00C896',WMS_CLEAR:'#fbbf24',COLETA:'#3b82f6',BILLING_ADD:'#00C896',BILLING_EDIT:'#f97316',BILLING_REMOVE:'#dc2626',INSUMO:'#7c3aed',USER_APPROVE:'#00C896',PRICING_UPDATE:'#fbbf24',BACKUP:'#3b82f6'};
+                  return (
+                    <tr key={l.id} style={{borderBottom:'1px solid #1E202850'}}>
+                      <td style={{padding:'6px 10px',color:'#8B8D97',whiteSpace:'nowrap',fontSize:11}}>{dt.toLocaleDateString('pt-BR')} {dt.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}</td>
+                      <td style={{padding:'6px 10px',fontWeight:600,color:'#93c5fd',fontSize:12}}>{l.userName||l.user}</td>
+                      <td style={{padding:'6px 10px'}}><span style={{padding:'2px 8px',borderRadius:4,fontSize:10,fontWeight:700,background:(actionColors[l.action]||'#8B8D97')+'20',color:actionColors[l.action]||'#8B8D97'}}>{l.action}</span></td>
+                      <td style={{padding:'6px 10px',color:'#C0C2CC',maxWidth:400,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{l.details}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
         </div>
       )}

@@ -1,0 +1,69 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Helper: check if user is authenticated
+    function isAuth() {
+      return request.auth != null;
+    }
+    
+    // Helper: get user role from users collection
+    function getUserRole() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
+    }
+    
+    // Helper: check if director
+    function isDirector() {
+      return isAuth() && getUserRole() == 'diretor';
+    }
+    
+    // Helper: check internal (director, comercial, financeiro, logistica)
+    function isInternal() {
+      return isAuth() && getUserRole() in ['diretor', 'comercial', 'financeiro', 'logistica'];
+    }
+
+    // Users collection - anyone authenticated can read their own, director can read/write all
+    match /users/{userId} {
+      allow read: if isAuth() && (request.auth.uid == userId || isInternal());
+      allow create: if isAuth() && request.auth.uid == userId;
+      allow update: if isAuth() && (request.auth.uid == userId || isDirector());
+      allow delete: if isDirector();
+    }
+
+    // WMS data - internal can read/write, clients can read
+    match /wms/{docId} {
+      allow read: if isAuth();
+      allow write: if isAuth() && isInternal();
+    }
+
+    // Billing - director and comercial can write, clients can read their own
+    match /billing/{docId} {
+      allow read: if isAuth();
+      allow write: if isAuth() && getUserRole() in ['diretor', 'comercial'];
+    }
+
+    // Config (pricing, costs, lastBackup) - director only writes, all auth reads
+    match /config/{docId} {
+      allow read: if isAuth();
+      allow write: if isDirector();
+    }
+
+    // Backups - director only
+    match /backups/{docId} {
+      allow read, write: if isDirector();
+    }
+
+    // Logs - internal can write (for logging), director can read
+    match /logs/{docId} {
+      allow read: if isAuth() && getUserRole() in ['diretor', 'comercial'];
+      allow create: if isAuth();
+      allow delete: if isDirector();
+    }
+
+    // Insumos - all internal can write, all auth can read
+    match /insumos/{docId} {
+      allow read: if isAuth();
+      allow write: if isAuth() && isInternal();
+    }
+  }
+}

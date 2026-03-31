@@ -229,3 +229,28 @@ export async function autoBackup() {
     return false;
   }
 }
+
+
+// ─── Audit Log ──────────────────────────────────────
+export async function logAction(user, action, details) {
+  try {
+    const id = Date.now().toString(36) + Math.random().toString(36).substring(2,6);
+    await setDoc(doc(db, 'logs', id), {
+      timestamp: new Date().toISOString(),
+      user: user?.email || 'system',
+      userName: user?.nome || user?.email || 'system',
+      role: user?.role || 'system',
+      action,
+      details: typeof details === 'string' ? details : JSON.stringify(details),
+    });
+  } catch(e) { console.error('Log error:', e); }
+}
+
+export async function getLogs(limit = 100) {
+  try {
+    const snap = await getDocs(collection(db, 'logs'));
+    const logs = [];
+    snap.forEach(d => logs.push({id: d.id, ...d.data()}));
+    return logs.sort((a,b) => (b.timestamp||'').localeCompare(a.timestamp||'')).slice(0, limit);
+  } catch(e) { console.error(e); return []; }
+}

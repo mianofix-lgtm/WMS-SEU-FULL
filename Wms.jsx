@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect, useCallback } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { useAuth } from "./App.jsx";
-import { getPerms, logout, getWmsData, saveWmsData, db } from "./firebase.js";
+import { getPerms, logout, getWmsData, saveWmsData, db, logAction } from "./firebase.js";
 import { LOGO_ICON } from "./logo.js";
 import { doc, getDoc, setDoc } from "firebase/firestore";
 
@@ -116,6 +116,7 @@ export default function Wms() {
     saveInsumos(next);
     setNewInsumo({nome:'',unidade:newInsumo.unidade,precoUnit:newInsumo.precoUnit,qtdRetirada:'',colaborador:'',obs:''});
     showToast('Insumo registrado!');
+    logAction(user, 'INSUMO', `${newInsumo.nome} x${newInsumo.qtdRetirada} por ${newInsumo.colaborador||user?.nome}`);
   }
 
   function removeInsumo(id) {
@@ -154,6 +155,7 @@ export default function Wms() {
       await saveWmsData(next);
       await setDoc(doc(db, 'wms', 'coletas'), { history: JSON.stringify(newHistory), updatedAt: new Date().toISOString() });
       showToast(`${items.length} posições coletadas!`);
+      logAction(user, 'COLETA', `${items.length} posições coletadas do Full Pronto`);
     } catch(e) { showToast("Erro ao arquivar", "warn"); }
   }
 
@@ -219,6 +221,7 @@ export default function Wms() {
     try {
       await saveWmsData(next);
       showToast("Salvo na nuvem ☁️");
+      logAction(user, 'WMS_SAVE', `Posição ${editId} atualizada`);
     } catch(e) {
       showToast("Erro ao salvar", "warn");
     }
@@ -234,6 +237,7 @@ export default function Wms() {
     try {
       await saveWmsData(next);
       showToast("Posição limpa");
+      logAction(user, 'WMS_CLEAR', `Posição ${editId} limpa`);
     } catch(e) {
       showToast("Erro ao limpar", "warn");
     }

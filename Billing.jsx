@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from './App.jsx';
-import { db, getWmsData, getPricing, DEFAULT_PRICES } from './firebase.js';
+import { db, getWmsData, getPricing, DEFAULT_PRICES, logAction } from './firebase.js';
 import { LOGO_ICON, LOGO_WORDMARK } from './logo.js';
 import { doc, getDoc, setDoc, collection, getDocs } from 'firebase/firestore';
 
@@ -149,6 +149,7 @@ export default function Billing() {
     setNewSale({numero:'',produto:'',canal:newSale.canal,qtd:'1',kitTier:'small',valorCustom:'',descCustom:'',dataVenda:'',numEnvio:''});
     setEditingSale(null);
     showToast(editingSale ? 'Venda atualizada!' : 'Venda registrada!');
+    logAction(user, editingSale ? 'BILLING_EDIT' : 'BILLING_ADD', `${selClient}: ${sale.canal} - ${sale.produto} x${sale.qtd} = R$${sale.valor.toFixed(2)}`);
   }
 
   function calcSaleValue(s) {
@@ -189,6 +190,7 @@ export default function Billing() {
     setSales(next);
     await saveClientData(next, pallets);
     showToast('Venda removida');
+    logAction(user, 'BILLING_REMOVE', `${selClient}: lançamento removido`);
   }
 
   // ─── Pallets ───
