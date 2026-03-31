@@ -420,6 +420,7 @@ tr:nth-child(even){background:#fafafa;}
           </Link>
         </div>
         <div style={{display:'flex',gap:12}}>
+          <Link to="/dashboard" style={{...S.navBtn,color:'#00C896'}}>Dashboard</Link>
           <Link to="/wms" style={S.navBtn}>WMS</Link>
           <Link to="/admin" style={{...S.navBtn,color:'#fbbf24'}}>Admin</Link>
           <Link to="/portal" style={S.navBtn}>Portal</Link>

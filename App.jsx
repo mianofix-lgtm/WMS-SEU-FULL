@@ -8,6 +8,7 @@ import Wms from './Wms.jsx';
 import Register from './Register.jsx';
 import Admin from './Admin.jsx';
 import Billing from './Billing.jsx';
+import Dashboard from './Dashboard.jsx';
 
 // ─── Auth Context ────────────────────────────────────────
 export const AuthContext = createContext(null);
@@ -59,6 +60,11 @@ export default function App() {
         <Route path="/billing" element={
           <ProtectedRoute roles={['diretor','comercial']}>
             <Billing />
+          </ProtectedRoute>
+        } />
+        <Route path="/dashboard" element={
+          <ProtectedRoute roles={['diretor']}>
+            <Dashboard />
           </ProtectedRoute>
         } />
         <Route path="*" element={<Navigate to="/" />} />
