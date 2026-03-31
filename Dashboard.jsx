@@ -23,8 +23,7 @@ export default function Dashboard() {
   const [customCosts, setCustomCosts] = useState([]);
   const [insumos, setInsumos] = useState([]);
   const [newCost, setNewCost] = useState({nome:'',valor:''});
-  const [newInsumo, setNewInsumo] = useState({nome:'',unidade:'un',precoUnit:'',usado:'',periodo:month});
-  const [savingCosts, setSavingCosts] = useState(false);
+    const [savingCosts, setSavingCosts] = useState(false);
 
   useEffect(() => { loadAll(); }, []);
   useEffect(() => { loadInsumos(); }, [month]);
@@ -423,61 +422,43 @@ export default function Dashboard() {
             </tbody>
           </table>
         </div>
-        {/* ─── INSUMOS ─── */}
+        {/* ─── INSUMOS (read-only from WMS) ─── */}
         <div style={{...S.card,marginTop:20}}>
-          <h3 style={{fontSize:15,fontWeight:700,marginBottom:4}}>Controle de Insumos — {new Date(month+'-15').toLocaleDateString('pt-BR',{month:'long',year:'numeric'})}</h3>
-          <p style={{fontSize:12,color:'#8B8D97',marginBottom:16}}>Registre o consumo de materiais e compare com o volume produzido. Perdas aparecem em vermelho.</p>
-          
-          <table style={{width:'100%',borderCollapse:'collapse',fontSize:13}}>
-            <thead><tr>
-              <th style={S.th}>Insumo</th>
-              <th style={S.th}>Unidade</th>
-              <th style={{...S.th,textAlign:'right'}}>Preço Unit.</th>
-              <th style={{...S.th,textAlign:'right'}}>Usado</th>
-              <th style={{...S.th,textAlign:'right'}}>Custo Total</th>
-              <th style={{...S.th,textAlign:'right'}}>Custo/Pedido</th>
-              <th style={S.th}></th>
-            </tr></thead>
-            <tbody>
-              {insumos.length === 0 ? (
-                <tr><td colSpan={7} style={{...S.td,textAlign:'center',color:'#8B8D97',padding:20}}>Nenhum insumo registrado. Adicione rolos de etiqueta, fitas, stretch, etc.</td></tr>
-              ) : insumos.map(i => {
-                const custoTotal = (parseFloat(i.precoUnit)||0) * (parseFloat(i.usado)||0);
-                const totalPedidos = currentMonth.salesCount || 1;
-                const custoPorPedido = custoTotal / totalPedidos;
-                return (
-                  <tr key={i.id}>
-                    <td style={{...S.td,fontWeight:600}}>{i.nome}</td>
-                    <td style={S.td}>{i.unidade}</td>
-                    <td style={{...S.td,textAlign:'right'}}><input type="number" value={i.precoUnit} onChange={e=>updateInsumo(i.id,'precoUnit',e.target.value)} style={{width:80,padding:'3px 6px',background:'#161820',border:'1px solid #1E2028',borderRadius:4,color:'#fff',fontSize:13,textAlign:'right',fontFamily:'inherit',outline:'none'}} step="0.01" /></td>
-                    <td style={{...S.td,textAlign:'right'}}><input type="number" value={i.usado} onChange={e=>updateInsumo(i.id,'usado',e.target.value)} style={{width:80,padding:'3px 6px',background:'#161820',border:'1px solid #1E2028',borderRadius:4,color:'#fff',fontSize:13,textAlign:'right',fontFamily:'inherit',outline:'none'}} /></td>
-                    <td style={{...S.td,textAlign:'right',fontWeight:700,color:'#7c3aed'}}>R$ {custoTotal.toLocaleString('pt-BR',{minimumFractionDigits:2})}</td>
-                    <td style={{...S.td,textAlign:'right',fontSize:12,color:'#8B8D97'}}>R$ {custoPorPedido.toFixed(2)}/ped</td>
-                    <td style={S.td}><button onClick={()=>removeInsumo(i.id)} style={{background:'none',border:'none',color:'#dc2626',cursor:'pointer',fontSize:13}}>✕</button></td>
-                  </tr>
-                );
-              })}
-              {insumos.length > 0 && (
-                <tr style={{background:'#7c3aed10'}}>
-                  <td style={{...S.td,fontWeight:800}} colSpan={4}>Total Insumos</td>
-                  <td style={{...S.td,textAlign:'right',fontWeight:900,color:'#7c3aed'}}>R$ {insumos.reduce((s,i)=>(s+(parseFloat(i.precoUnit)||0)*(parseFloat(i.usado)||0)),0).toLocaleString('pt-BR',{minimumFractionDigits:2})}</td>
-                  <td style={{...S.td,textAlign:'right',fontSize:12,color:'#8B8D97'}}>R$ {(insumos.reduce((s,i)=>(s+(parseFloat(i.precoUnit)||0)*(parseFloat(i.usado)||0)),0)/(currentMonth.salesCount||1)).toFixed(2)}/ped</td>
-                  <td style={S.td}></td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-
-          {/* Add insumo form */}
-          <div style={{display:'flex',gap:8,marginTop:12,flexWrap:'wrap',alignItems:'flex-end'}}>
-            <div><div style={{fontSize:10,color:'#8B8D97',marginBottom:2}}>NOME</div><input value={newInsumo.nome} onChange={e=>setNewInsumo(p=>({...p,nome:e.target.value}))} placeholder="Ex: Rolo etiqueta" style={{padding:'8px 10px',background:'#161820',border:'1px solid #1E2028',borderRadius:6,color:'#fff',fontSize:13,fontFamily:'inherit',outline:'none',width:160}} /></div>
-            <div><div style={{fontSize:10,color:'#8B8D97',marginBottom:2}}>UNIDADE</div><select value={newInsumo.unidade} onChange={e=>setNewInsumo(p=>({...p,unidade:e.target.value}))} style={{padding:'8px 10px',background:'#161820',border:'1px solid #1E2028',borderRadius:6,color:'#fff',fontSize:13,fontFamily:'inherit',outline:'none'}}>
-              <option value="un">Unidade</option><option value="rolo">Rolo</option><option value="cx">Caixa</option><option value="m">Metro</option><option value="kg">Kg</option><option value="L">Litro</option>
-            </select></div>
-            <div><div style={{fontSize:10,color:'#8B8D97',marginBottom:2}}>PREÇO UNIT.</div><input type="number" value={newInsumo.precoUnit} onChange={e=>setNewInsumo(p=>({...p,precoUnit:e.target.value}))} placeholder="0.00" step="0.01" style={{padding:'8px 10px',background:'#161820',border:'1px solid #1E2028',borderRadius:6,color:'#fff',fontSize:13,fontFamily:'inherit',outline:'none',width:100}} /></div>
-            <div><div style={{fontSize:10,color:'#8B8D97',marginBottom:2}}>QTD USADA</div><input type="number" value={newInsumo.usado} onChange={e=>setNewInsumo(p=>({...p,usado:e.target.value}))} placeholder="0" style={{padding:'8px 10px',background:'#161820',border:'1px solid #1E2028',borderRadius:6,color:'#fff',fontSize:13,fontFamily:'inherit',outline:'none',width:80}} /></div>
-            <button onClick={addInsumo} style={{padding:'8px 20px',background:'#7c3aed',color:'#fff',border:'none',borderRadius:6,fontWeight:700,cursor:'pointer',fontFamily:'inherit',fontSize:13}}>+ Adicionar</button>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
+            <div>
+              <h3 style={{fontSize:15,fontWeight:700}}>Insumos — {new Date(month+'-15').toLocaleDateString('pt-BR',{month:'long',year:'numeric'})}</h3>
+              <p style={{fontSize:12,color:'#8B8D97'}}>Registrado pela logística no WMS. Custo incluído no P&L.</p>
+            </div>
+            <Link to="/wms" style={{padding:'6px 14px',background:'#7c3aed20',border:'1px solid #7c3aed40',borderRadius:6,color:'#7c3aed',fontSize:12,fontWeight:600,textDecoration:'none'}}>Gerenciar no WMS →</Link>
           </div>
+          {insumos.length === 0 ? (
+            <div style={{textAlign:'center',color:'#8B8D97',padding:20,fontSize:13}}>Nenhum insumo registrado este mês. A equipe de logística registra no WMS → aba Insumos.</div>
+          ) : (
+            <>
+              {/* Summary cards */}
+              <div style={{display:'flex',gap:8,flexWrap:'wrap',marginBottom:12}}>
+                {Object.entries(insumos.reduce((acc,i) => {
+                  const key = i.nome === 'Outro' ? (i.obs||'Outro') : i.nome;
+                  if (!acc[key]) acc[key] = {qtd:0,custo:0,retiradas:0};
+                  acc[key].qtd += parseFloat(i.usado)||0;
+                  acc[key].custo += (parseFloat(i.precoUnit)||0) * (parseFloat(i.usado)||0);
+                  acc[key].retiradas++;
+                  return acc;
+                }, {})).sort(([,a],[,b])=>b.custo-a.custo).map(([nome,data]) => (
+                  <div key={nome} style={{background:'#161820',borderRadius:8,padding:'10px 14px',minWidth:140,flex:1}}>
+                    <div style={{fontSize:12,fontWeight:700,color:'#C0C2CC'}}>{nome}</div>
+                    <div style={{fontSize:11,color:'#8B8D97',marginTop:2}}>{data.retiradas} retiradas · {data.qtd} un</div>
+                    <div style={{fontSize:16,fontWeight:900,color:'#7c3aed',marginTop:2}}>R$ {data.custo.toFixed(2)}</div>
+                    <div style={{fontSize:10,color:'#8B8D97'}}>R$ {(data.custo/(currentMonth.salesCount||1)).toFixed(3)}/pedido</div>
+                  </div>
+                ))}
+              </div>
+              <div style={{display:'flex',justifyContent:'space-between',padding:'12px 0',borderTop:'1px solid #1E2028'}}>
+                <span style={{fontWeight:800}}>Total Insumos</span>
+                <span style={{fontSize:18,fontWeight:900,color:'#7c3aed'}}>R$ {insumos.reduce((s,i)=>(s+(parseFloat(i.precoUnit)||0)*(parseFloat(i.usado)||0)),0).toLocaleString('pt-BR',{minimumFractionDigits:2})}</span>
+              </div>
+            </>
+          )}
         </div>
       </div>
     </div>
