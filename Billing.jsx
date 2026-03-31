@@ -155,8 +155,8 @@ export default function Billing() {
     const q = parseInt(s.qtd) || 1;
     const custom = parseFloat(s.valorCustom) || 0;
     if (s.canal === 'Full ML') return q * PRICES.full_unit;
-    if (s.canal === 'Flex') return PRICES.flex;
-    if (s.canal === 'Correios' || s.canal === 'Places') return PRICES.correios_places;
+    if (s.canal === 'Flex') return q * PRICES.flex;
+    if (s.canal === 'Correios' || s.canal === 'Places') return q * PRICES.correios_places;
     if (s.canal === 'Kit') {
       const tier = s.kitTier === 'large' ? PRICES.kit_large : s.kitTier === 'medium' ? PRICES.kit_medium : PRICES.kit_small;
       return q * tier;
