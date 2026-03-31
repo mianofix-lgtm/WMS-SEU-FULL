@@ -167,15 +167,23 @@ export default function Wms() {
   // Full Pronto stats
   const fullStats = useMemo(() => {
     let paletes=0, valor=0, occupied=0;
+    const byLoja = {};
     fullSlots.forEach(s => {
       const c = cells[s];
       if (c && (c.descricao || c.loja)) {
         occupied++;
-        paletes += parseInt(c.paletes)||1;
-        valor += (parseInt(c.qtd)||0) * (parseFloat(c.valorUnit)||0);
+        const p = parseInt(c.paletes)||1;
+        const v = (parseInt(c.qtd)||0) * (parseFloat(c.valorUnit)||0);
+        paletes += p;
+        valor += v;
+        const loja = c.loja || 'Sem Loja';
+        if (!byLoja[loja]) byLoja[loja] = {paletes:0, valor:0, items:[]};
+        byLoja[loja].paletes += p;
+        byLoja[loja].valor += v;
+        byLoja[loja].items.push({slot: s, descricao: c.descricao, qtd: c.qtd, paletes: p, valor: v, dataEntrada: c.dataEntrada});
       }
     });
-    return { paletes, valor, occupied };
+    return { paletes, valor, occupied, byLoja };
   }, [cells]);
 
   return (
@@ -375,21 +383,50 @@ export default function Wms() {
                     );
                   })()}
                 </div>
+                {/* Breakdown by loja */}
+                {Object.keys(fullStats.byLoja).length > 0 && (
+                  <div style={{padding:'6px 12px'}}>
+                    <div style={{fontSize:10,fontWeight:700,color:'#8B8D97',textTransform:'uppercase',letterSpacing:1,marginBottom:6}}>Detalhamento por Loja</div>
+                    {Object.entries(fullStats.byLoja).sort(([a],[b])=>a.localeCompare(b)).map(([loja, data]) => (
+                      <div key={loja} style={{background:'#161820',borderRadius:8,padding:'8px 12px',marginBottom:6}}>
+                        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                          <span style={{fontSize:13,fontWeight:700,color:'#93c5fd'}}>{loja}</span>
+                          <span style={{fontSize:12,color:'#C0C2CC'}}>{data.paletes} pal · {canSeeValues ? `R$ ${data.valor.toLocaleString('pt-BR',{minimumFractionDigits:2})}` : ''}</span>
+                        </div>
+                        <div style={{marginTop:4}}>
+                          {data.items.map((item,j) => (
+                            <div key={j} style={{fontSize:10,color:'#8B8D97',display:'flex',justifyContent:'space-between',padding:'2px 0'}}>
+                              <span>{item.slot} — {item.descricao||'-'} ({item.qtd||0} un)</span>
+                              <span>{item.dataEntrada ? new Date(item.dataEntrada+'T00:00:00').toLocaleDateString('pt-BR') : 'Sem data'}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
                 {/* Archive button */}
                 {canDelete && <div style={{padding:'6px 12px'}}>
                   <button onClick={arquivarColeta} style={{width:'100%',padding:'10px',background:'#dc262620',border:'1px solid #dc262640',borderRadius:8,color:'#fca5a5',fontWeight:700,cursor:'pointer',fontFamily:'inherit',fontSize:12}}>📦 Arquivar Coleta (limpar Full)</button>
                 </div>}
                 {/* Coleta history */}
-                {coletaHistory.length > 0 && <div style={{padding:'6px 12px',maxHeight:150,overflowY:'auto'}}>
-                  <div style={{fontSize:10,fontWeight:700,color:'#8B8D97',textTransform:'uppercase',letterSpacing:1,marginBottom:6}}>Histórico de Coletas</div>
-                  {coletaHistory.slice(0,5).map((h,i) => {
+                <div style={{padding:'6px 12px'}}>
+                  <div style={{fontSize:10,fontWeight:700,color:'#8B8D97',textTransform:'uppercase',letterSpacing:1,marginBottom:6}}>Histórico de Coletas ({coletaHistory.length})</div>
+                  {coletaHistory.length === 0 ? (
+                    <div style={{fontSize:11,color:'#8B8D97',padding:'8px',background:'#161820',borderRadius:6,textAlign:'center'}}>Nenhuma coleta arquivada ainda.</div>
+                  ) : coletaHistory.slice(0,10).map((h,i) => {
                     const d = new Date(h.date);
-                    return <div key={i} style={{fontSize:11,color:'#C0C2CC',padding:'4px 8px',background:'#161820',borderRadius:6,marginBottom:4,display:'flex',justifyContent:'space-between'}}>
-                      <span>{d.toLocaleDateString('pt-BR')} {d.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}</span>
-                      <span>{h.paletes||h.items?.length||0} paletes · {canSeeValues ? `R$ ${(h.valor||0).toLocaleString('pt-BR',{minimumFractionDigits:2})}` : ''}</span>
+                    const lojas = [...new Set((h.items||[]).map(it=>it.loja).filter(Boolean))].join(', ');
+                    return <div key={i} style={{fontSize:11,color:'#C0C2CC',padding:'6px 10px',background:'#161820',borderRadius:6,marginBottom:4}}>
+                      <div style={{display:'flex',justifyContent:'space-between'}}>
+                        <span style={{fontWeight:700}}>{d.toLocaleDateString('pt-BR')} {d.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}</span>
+                        <span>{h.paletes||h.items?.length||0} paletes{canSeeValues ? ` · R$ ${(h.valor||0).toLocaleString('pt-BR',{minimumFractionDigits:2})}` : ''}</span>
+                      </div>
+                      {lojas && <div style={{fontSize:10,color:'#8B8D97',marginTop:2}}>Lojas: {lojas}</div>}
+                      <div style={{fontSize:10,color:'#8B8D97',marginTop:2}}>{(h.items||[]).length} posições arquivadas</div>
                     </div>;
                   })}
-                </div>}
+                </div>
                 <div className="wms-full-grid">
                   {fullSlots.map(s => {
                     const c = cells[s]; const has = c && (c.descricao || c.loja);
