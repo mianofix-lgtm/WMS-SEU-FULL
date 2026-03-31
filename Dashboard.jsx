@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { useAuth } from './App.jsx';
 import { LOGO_ICON } from './logo.js';
 import { db, getWmsData, getPricing } from './firebase.js';
-import { collection, getDocs, doc, getDoc } from 'firebase/firestore';
+import { collection, getDocs, doc, getDoc, setDoc } from 'firebase/firestore';
 
 export default function Dashboard() {
   const { user } = useAuth();
@@ -19,7 +19,15 @@ export default function Dashboard() {
     aluguel: 65000, caucao: 2550, folha: 130000, etiquetas: 8000, energia: 5000, outros: 5000
   });
 
+  const [showCostEditor, setShowCostEditor] = useState(false);
+  const [customCosts, setCustomCosts] = useState([]);
+  const [insumos, setInsumos] = useState([]);
+  const [newCost, setNewCost] = useState({nome:'',valor:''});
+  const [newInsumo, setNewInsumo] = useState({nome:'',unidade:'un',precoUnit:'',usado:'',periodo:month});
+  const [savingCosts, setSavingCosts] = useState(false);
+
   useEffect(() => { loadAll(); }, []);
+  useEffect(() => { loadInsumos(); }, [month]);
 
   async function loadAll() {
     setLoading(true);
@@ -34,12 +42,69 @@ export default function Dashboard() {
       setWmsData(wms || {});
       setPricing(pr);
       if (coletaDoc?.exists?.() && coletaDoc.data().history) setColetaHistory(JSON.parse(coletaDoc.data().history));
-      if (costsDoc?.exists?.()) setCosts(c => ({...c, ...costsDoc.data()}));
+      if (costsDoc?.exists?.()) {
+        const cd = costsDoc.data();
+        setCosts(c => ({...c, ...cd}));
+        if (cd.custom) setCustomCosts(JSON.parse(cd.custom));
+      }
       const docs = [];
       snap.forEach(d => docs.push({id: d.id, ...d.data()}));
       setBillingDocs(docs);
     } catch(e) { console.error(e); }
     setLoading(false);
+  }
+
+  async function loadInsumos() {
+    try {
+      const d = await getDoc(doc(db, 'insumos', month));
+      if (d.exists() && d.data().items) setInsumos(JSON.parse(d.data().items));
+      else setInsumos([]);
+    } catch(e) { setInsumos([]); }
+  }
+
+  async function saveCosts() {
+    setSavingCosts(true);
+    try {
+      await setDoc(doc(db, 'config', 'costs'), { ...costs, custom: JSON.stringify(customCosts), updatedAt: new Date().toISOString() });
+    } catch(e) { console.error(e); }
+    setSavingCosts(false);
+  }
+
+  async function saveInsumos(items) {
+    try {
+      await setDoc(doc(db, 'insumos', month), { items: JSON.stringify(items), month, updatedAt: new Date().toISOString() });
+    } catch(e) { console.error(e); }
+  }
+
+  function addCustomCost() {
+    if (!newCost.nome) return;
+    const next = [...customCosts, {id: Date.now().toString(36), nome: newCost.nome, valor: parseFloat(newCost.valor)||0}];
+    setCustomCosts(next);
+    setNewCost({nome:'',valor:''});
+  }
+
+  function removeCustomCost(id) {
+    setCustomCosts(customCosts.filter(c => c.id !== id));
+  }
+
+  function addInsumo() {
+    if (!newInsumo.nome) return;
+    const next = [...insumos, {id: Date.now().toString(36), ...newInsumo, precoUnit: parseFloat(newInsumo.precoUnit)||0, usado: parseFloat(newInsumo.usado)||0}];
+    setInsumos(next);
+    saveInsumos(next);
+    setNewInsumo({nome:'',unidade:'un',precoUnit:'',usado:'',periodo:month});
+  }
+
+  function updateInsumo(id, field, value) {
+    const next = insumos.map(i => i.id === id ? {...i, [field]: value} : i);
+    setInsumos(next);
+    saveInsumos(next);
+  }
+
+  function removeInsumo(id) {
+    const next = insumos.filter(i => i.id !== id);
+    setInsumos(next);
+    saveInsumos(next);
   }
 
   // Parse billing docs into structured data
@@ -104,7 +169,10 @@ export default function Dashboard() {
     const totalSalesRevenue = data.totalSales;
     const totalRevenue = totalPalletRevenue + totalWmsRevenue + totalSalesRevenue;
 
-    const totalCosts = Object.values(costs).reduce((s,v) => s + (parseFloat(v)||0), 0);
+    const baseCosts = Object.values(costs).reduce((s,v) => s + (typeof v === 'number' || typeof v === 'string' ? parseFloat(v)||0 : 0), 0);
+    const customTotal = customCosts.reduce((s,c) => s + (parseFloat(c.valor)||0), 0);
+    const insumosTotal = insumos.reduce((s,i) => s + ((parseFloat(i.precoUnit)||0) * (parseFloat(i.usado)||0)), 0);
+    const totalCosts = baseCosts + customTotal + insumosTotal;
     const profit = totalRevenue - totalCosts;
     const margin = totalRevenue > 0 ? (profit / totalRevenue * 100) : 0;
 
@@ -257,26 +325,64 @@ export default function Dashboard() {
             </div>
           </div>
 
-          {/* Costs breakdown */}
+          {/* Costs breakdown - EDITABLE */}
           <div style={S.card}>
-            <h3 style={{fontSize:15,fontWeight:700,marginBottom:16}}>Custos Operacionais</h3>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
+              <h3 style={{fontSize:15,fontWeight:700}}>Custos Operacionais</h3>
+              <button onClick={()=>setShowCostEditor(!showCostEditor)} style={{padding:'4px 12px',background:'#161820',border:'1px solid #1E2028',borderRadius:4,color:'#8B8D97',fontSize:11,cursor:'pointer',fontFamily:'inherit'}}>{showCostEditor?'Fechar':'Editar'}</button>
+            </div>
             {[
               ['Aluguel galpão','aluguel'],
               ['Caução (oport.)','caucao'],
               ['Folha pagamento','folha'],
               ['Etiquetas/embalagens','etiquetas'],
               ['Energia/utilidades','energia'],
-              ['Outros','outros'],
+              ['Outros fixos','outros'],
             ].map(([label,key]) => (
-              <div key={key} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'8px 0',borderBottom:'1px solid #1E2028'}}>
+              <div key={key} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'6px 0',borderBottom:'1px solid #1E2028'}}>
                 <span style={{fontSize:13,color:'#C0C2CC'}}>{label}</span>
-                <span style={{fontSize:14,fontWeight:700,color:'#dc2626'}}>R$ {(parseFloat(costs[key])||0).toLocaleString('pt-BR',{minimumFractionDigits:0})}</span>
+                {showCostEditor ? (
+                  <input type="number" value={costs[key]||''} onChange={e=>setCosts(p=>({...p,[key]:e.target.value}))} style={{width:110,padding:'4px 8px',background:'#161820',border:'1px solid #1E2028',borderRadius:4,color:'#dc2626',fontSize:14,fontWeight:700,textAlign:'right',fontFamily:'inherit',outline:'none'}} />
+                ) : (
+                  <span style={{fontSize:14,fontWeight:700,color:'#dc2626'}}>R$ {(parseFloat(costs[key])||0).toLocaleString('pt-BR',{minimumFractionDigits:0})}</span>
+                )}
               </div>
             ))}
-            <div style={{display:'flex',justifyContent:'space-between',padding:'12px 0',marginTop:4}}>
+            {/* Custom costs */}
+            {customCosts.map(cc => (
+              <div key={cc.id} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'6px 0',borderBottom:'1px solid #1E2028'}}>
+                <span style={{fontSize:13,color:'#f97316'}}>{cc.nome}</span>
+                <div style={{display:'flex',gap:6,alignItems:'center'}}>
+                  {showCostEditor ? (
+                    <>
+                      <input type="number" value={cc.valor} onChange={e=>{const next=customCosts.map(c=>c.id===cc.id?{...c,valor:e.target.value}:c);setCustomCosts(next);}} style={{width:100,padding:'4px 8px',background:'#161820',border:'1px solid #1E2028',borderRadius:4,color:'#f97316',fontSize:14,fontWeight:700,textAlign:'right',fontFamily:'inherit',outline:'none'}} />
+                      <button onClick={()=>removeCustomCost(cc.id)} style={{background:'none',border:'none',color:'#dc2626',cursor:'pointer',fontSize:14}}>✕</button>
+                    </>
+                  ) : (
+                    <span style={{fontSize:14,fontWeight:700,color:'#f97316'}}>R$ {(parseFloat(cc.valor)||0).toLocaleString('pt-BR',{minimumFractionDigits:0})}</span>
+                  )}
+                </div>
+              </div>
+            ))}
+            {/* Insumos total */}
+            {insumos.length > 0 && (
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'6px 0',borderBottom:'1px solid #1E2028'}}>
+                <span style={{fontSize:13,color:'#7c3aed'}}>Insumos ({insumos.length} itens)</span>
+                <span style={{fontSize:14,fontWeight:700,color:'#7c3aed'}}>R$ {insumos.reduce((s,i)=>(s+(parseFloat(i.precoUnit)||0)*(parseFloat(i.usado)||0)),0).toLocaleString('pt-BR',{minimumFractionDigits:0})}</span>
+              </div>
+            )}
+            {showCostEditor && (
+              <div style={{marginTop:8,display:'flex',gap:6}}>
+                <input value={newCost.nome} onChange={e=>setNewCost(p=>({...p,nome:e.target.value}))} placeholder="Nome do custo" style={{flex:1,padding:'6px 10px',background:'#161820',border:'1px solid #1E2028',borderRadius:4,color:'#fff',fontSize:12,fontFamily:'inherit',outline:'none'}} />
+                <input type="number" value={newCost.valor} onChange={e=>setNewCost(p=>({...p,valor:e.target.value}))} placeholder="Valor" style={{width:90,padding:'6px 10px',background:'#161820',border:'1px solid #1E2028',borderRadius:4,color:'#fff',fontSize:12,fontFamily:'inherit',outline:'none',textAlign:'right'}} />
+                <button onClick={addCustomCost} style={{padding:'6px 12px',background:'#1e3a5f',border:'none',borderRadius:4,color:'#93c5fd',fontSize:11,cursor:'pointer',fontFamily:'inherit',fontWeight:600}}>+</button>
+              </div>
+            )}
+            <div style={{display:'flex',justifyContent:'space-between',padding:'10px 0',marginTop:4}}>
               <span style={{fontSize:14,fontWeight:800}}>Total</span>
               <span style={{fontSize:18,fontWeight:900,color:'#dc2626'}}>R$ {currentMonth.totalCosts.toLocaleString('pt-BR',{minimumFractionDigits:0})}</span>
             </div>
+            {showCostEditor && <button onClick={saveCosts} disabled={savingCosts} style={{width:'100%',padding:'8px',background:'#00C896',color:'#2E2C3A',border:'none',borderRadius:6,fontWeight:700,cursor:'pointer',fontFamily:'inherit',fontSize:12,marginTop:4}}>{savingCosts?'Salvando...':'Salvar Custos'}</button>}
           </div>
         </div>
 
@@ -316,6 +422,62 @@ export default function Dashboard() {
               </tr>
             </tbody>
           </table>
+        </div>
+        {/* ─── INSUMOS ─── */}
+        <div style={{...S.card,marginTop:20}}>
+          <h3 style={{fontSize:15,fontWeight:700,marginBottom:4}}>Controle de Insumos — {new Date(month+'-15').toLocaleDateString('pt-BR',{month:'long',year:'numeric'})}</h3>
+          <p style={{fontSize:12,color:'#8B8D97',marginBottom:16}}>Registre o consumo de materiais e compare com o volume produzido. Perdas aparecem em vermelho.</p>
+          
+          <table style={{width:'100%',borderCollapse:'collapse',fontSize:13}}>
+            <thead><tr>
+              <th style={S.th}>Insumo</th>
+              <th style={S.th}>Unidade</th>
+              <th style={{...S.th,textAlign:'right'}}>Preço Unit.</th>
+              <th style={{...S.th,textAlign:'right'}}>Usado</th>
+              <th style={{...S.th,textAlign:'right'}}>Custo Total</th>
+              <th style={{...S.th,textAlign:'right'}}>Custo/Pedido</th>
+              <th style={S.th}></th>
+            </tr></thead>
+            <tbody>
+              {insumos.length === 0 ? (
+                <tr><td colSpan={7} style={{...S.td,textAlign:'center',color:'#8B8D97',padding:20}}>Nenhum insumo registrado. Adicione rolos de etiqueta, fitas, stretch, etc.</td></tr>
+              ) : insumos.map(i => {
+                const custoTotal = (parseFloat(i.precoUnit)||0) * (parseFloat(i.usado)||0);
+                const totalPedidos = currentMonth.salesCount || 1;
+                const custoPorPedido = custoTotal / totalPedidos;
+                return (
+                  <tr key={i.id}>
+                    <td style={{...S.td,fontWeight:600}}>{i.nome}</td>
+                    <td style={S.td}>{i.unidade}</td>
+                    <td style={{...S.td,textAlign:'right'}}><input type="number" value={i.precoUnit} onChange={e=>updateInsumo(i.id,'precoUnit',e.target.value)} style={{width:80,padding:'3px 6px',background:'#161820',border:'1px solid #1E2028',borderRadius:4,color:'#fff',fontSize:13,textAlign:'right',fontFamily:'inherit',outline:'none'}} step="0.01" /></td>
+                    <td style={{...S.td,textAlign:'right'}}><input type="number" value={i.usado} onChange={e=>updateInsumo(i.id,'usado',e.target.value)} style={{width:80,padding:'3px 6px',background:'#161820',border:'1px solid #1E2028',borderRadius:4,color:'#fff',fontSize:13,textAlign:'right',fontFamily:'inherit',outline:'none'}} /></td>
+                    <td style={{...S.td,textAlign:'right',fontWeight:700,color:'#7c3aed'}}>R$ {custoTotal.toLocaleString('pt-BR',{minimumFractionDigits:2})}</td>
+                    <td style={{...S.td,textAlign:'right',fontSize:12,color:'#8B8D97'}}>R$ {custoPorPedido.toFixed(2)}/ped</td>
+                    <td style={S.td}><button onClick={()=>removeInsumo(i.id)} style={{background:'none',border:'none',color:'#dc2626',cursor:'pointer',fontSize:13}}>✕</button></td>
+                  </tr>
+                );
+              })}
+              {insumos.length > 0 && (
+                <tr style={{background:'#7c3aed10'}}>
+                  <td style={{...S.td,fontWeight:800}} colSpan={4}>Total Insumos</td>
+                  <td style={{...S.td,textAlign:'right',fontWeight:900,color:'#7c3aed'}}>R$ {insumos.reduce((s,i)=>(s+(parseFloat(i.precoUnit)||0)*(parseFloat(i.usado)||0)),0).toLocaleString('pt-BR',{minimumFractionDigits:2})}</td>
+                  <td style={{...S.td,textAlign:'right',fontSize:12,color:'#8B8D97'}}>R$ {(insumos.reduce((s,i)=>(s+(parseFloat(i.precoUnit)||0)*(parseFloat(i.usado)||0)),0)/(currentMonth.salesCount||1)).toFixed(2)}/ped</td>
+                  <td style={S.td}></td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+
+          {/* Add insumo form */}
+          <div style={{display:'flex',gap:8,marginTop:12,flexWrap:'wrap',alignItems:'flex-end'}}>
+            <div><div style={{fontSize:10,color:'#8B8D97',marginBottom:2}}>NOME</div><input value={newInsumo.nome} onChange={e=>setNewInsumo(p=>({...p,nome:e.target.value}))} placeholder="Ex: Rolo etiqueta" style={{padding:'8px 10px',background:'#161820',border:'1px solid #1E2028',borderRadius:6,color:'#fff',fontSize:13,fontFamily:'inherit',outline:'none',width:160}} /></div>
+            <div><div style={{fontSize:10,color:'#8B8D97',marginBottom:2}}>UNIDADE</div><select value={newInsumo.unidade} onChange={e=>setNewInsumo(p=>({...p,unidade:e.target.value}))} style={{padding:'8px 10px',background:'#161820',border:'1px solid #1E2028',borderRadius:6,color:'#fff',fontSize:13,fontFamily:'inherit',outline:'none'}}>
+              <option value="un">Unidade</option><option value="rolo">Rolo</option><option value="cx">Caixa</option><option value="m">Metro</option><option value="kg">Kg</option><option value="L">Litro</option>
+            </select></div>
+            <div><div style={{fontSize:10,color:'#8B8D97',marginBottom:2}}>PREÇO UNIT.</div><input type="number" value={newInsumo.precoUnit} onChange={e=>setNewInsumo(p=>({...p,precoUnit:e.target.value}))} placeholder="0.00" step="0.01" style={{padding:'8px 10px',background:'#161820',border:'1px solid #1E2028',borderRadius:6,color:'#fff',fontSize:13,fontFamily:'inherit',outline:'none',width:100}} /></div>
+            <div><div style={{fontSize:10,color:'#8B8D97',marginBottom:2}}>QTD USADA</div><input type="number" value={newInsumo.usado} onChange={e=>setNewInsumo(p=>({...p,usado:e.target.value}))} placeholder="0" style={{padding:'8px 10px',background:'#161820',border:'1px solid #1E2028',borderRadius:6,color:'#fff',fontSize:13,fontFamily:'inherit',outline:'none',width:80}} /></div>
+            <button onClick={addInsumo} style={{padding:'8px 20px',background:'#7c3aed',color:'#fff',border:'none',borderRadius:6,fontWeight:700,cursor:'pointer',fontFamily:'inherit',fontSize:13}}>+ Adicionar</button>
+          </div>
         </div>
       </div>
     </div>
