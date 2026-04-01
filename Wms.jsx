@@ -66,6 +66,8 @@ export default function Wms() {
   const [selectedColeta, setSelectedColeta] = useState(new Set());
   const [coletaForm, setColetaForm] = useState({colaborador:'',data:'',hora:''});
   const [fullTab, setFullTab] = useState('atual');
+  const [showMoveMenu, setShowMoveMenu] = useState(false);
+  const [moveTarget, setMoveTarget] = useState('');
 
   // Permissions
   const perms = getPerms(user?.role);
@@ -258,6 +260,73 @@ export default function Wms() {
       showToast("Erro ao limpar: " + (e.message||''), "warn");
     }
     setSel(null);
+  }
+
+  async function moveCell(destination) {
+    if (!sel || !cells[sel]) return;
+    const source = cells[sel];
+    const today = new Date().toISOString().substring(0,10);
+    
+    // Find first empty slot in destination
+    let targetSlot = null;
+    if (destination === 'producao') {
+      for (let i = 1; i <= 30; i++) {
+        const id = `PROD-${i}`;
+        if (!cells[id] || (!cells[id].descricao && !cells[id].loja)) { targetSlot = id; break; }
+      }
+    } else if (destination === 'full') {
+      for (let i = 1; i <= 40; i++) {
+        const id = `FULL-${i}`;
+        if (!cells[id] || (!cells[id].descricao && !cells[id].loja)) { targetSlot = id; break; }
+      }
+    } else if (destination === 'flex') {
+      for (let i = 1; i <= 60; i++) {
+        const id = `FLEX-${i}`;
+        if (!cells[id] || (!cells[id].descricao && !cells[id].loja)) { targetSlot = id; break; }
+      }
+    } else if (destination) {
+      targetSlot = destination;
+    }
+    
+    if (!targetSlot) { showToast(`Sem posição livre em ${destination}`, "warn"); return; }
+    if (!confirm(`Mover ${sel} → ${targetSlot}?`)) return;
+    
+    // Build destination data
+    const destData = {
+      descricao: source.nome || source.descricao || (source.produtos?.[0]?.nome) || '',
+      loja: source.loja || '',
+      qtd: source.qtd || (source.produtos ? source.produtos.reduce((s,p)=>s+(parseInt(p.qtd)||0),0).toString() : ''),
+      valorUnit: source.valorUnit || source.produtos?.[0]?.valorUnit || '',
+      paletes: source.paletes || '1',
+      obs: source.obs || '',
+      dataEntrada: today,
+      movidoDe: sel,
+      movidoEm: new Date().toISOString(),
+    };
+    
+    // Copy produtos if exists
+    if (source.produtos) destData.produtos = source.produtos;
+    
+    const next = {...cells};
+    // Record exit on source
+    next[sel] = { ...source, dataSaida: today, movidoPara: targetSlot, status: 'movido' };
+    // Actually remove source after recording
+    delete next[sel];
+    // Set destination
+    next[targetSlot] = destData;
+    
+    setCells(next);
+    try {
+      await saveWmsData(next);
+      showToast(`Movido: ${sel} → ${targetSlot}`);
+      logAction(user, 'WMS_MOVE', `${sel} → ${targetSlot} (${source.loja || '-'})`).catch(()=>{});
+    } catch(e) {
+      console.error("Move error:", e);
+      showToast("Erro ao mover: " + (e.message||''), "warn");
+    }
+    setSel(null);
+    setShowMoveMenu(false);
+    setMoveTarget('');
   }
 
   async function handleLogout() {
@@ -861,10 +930,35 @@ export default function Wms() {
                   </>
                 )}
               </div>
-              <div className="wms-modal-foot">
-                {canDelete && <button className="wms-btn-danger" onClick={clearCell}>🗑 Limpar</button>}
-                <button className="wms-btn-ghost" onClick={()=>setSel(null)}>Cancelar</button>
-                <button className="wms-btn-save" onClick={saveCell}>✓ Salvar na Nuvem</button>
+              <div className="wms-modal-foot" style={{flexDirection:'column',gap:8}}>
+                <div style={{display:'flex',gap:8,width:'100%'}}>
+                  <button className="wms-btn-ghost" onClick={()=>setSel(null)}>Cancelar</button>
+                  <button className="wms-btn-save" style={{flex:1}} onClick={saveCell}>✓ Salvar</button>
+                </div>
+                {cells[sel] && (cells[sel].nome || cells[sel].descricao || cells[sel].produtos?.[0]?.nome) && (
+                  <div style={{width:'100%'}}>
+                    {!showMoveMenu ? (
+                      <div style={{display:'flex',gap:6}}>
+                        <button onClick={()=>setShowMoveMenu(true)} style={{flex:1,padding:'10px',background:'#1e3a5f',border:'1px solid #3b82f640',borderRadius:8,color:'#93c5fd',fontWeight:700,cursor:'pointer',fontFamily:'inherit',fontSize:12}}>↗ Mover para...</button>
+                        {canDelete && <button className="wms-btn-danger" onClick={clearCell}>🗑</button>}
+                      </div>
+                    ) : (
+                      <div style={{background:'#0a1628',border:'1px solid #1e3a5f',borderRadius:8,padding:10}}>
+                        <div style={{fontSize:10,fontWeight:700,color:'#93c5fd',textTransform:'uppercase',letterSpacing:1,marginBottom:8}}>Mover {sel} para:</div>
+                        <div style={{display:'flex',gap:6,flexWrap:'wrap',marginBottom:8}}>
+                          <button onClick={()=>moveCell('producao')} style={{flex:1,padding:'10px',background:'#7c3aed20',border:'1px solid #7c3aed40',borderRadius:6,color:'#c4b5fd',fontWeight:700,cursor:'pointer',fontFamily:'inherit',fontSize:12,minWidth:100}}>Produção</button>
+                          <button onClick={()=>moveCell('full')} style={{flex:1,padding:'10px',background:'#1e3a5f',border:'1px solid #3b82f640',borderRadius:6,color:'#93c5fd',fontWeight:700,cursor:'pointer',fontFamily:'inherit',fontSize:12,minWidth:100}}>Full Pronto</button>
+                          <button onClick={()=>moveCell('flex')} style={{flex:1,padding:'10px',background:'#00C89620',border:'1px solid #00C89640',borderRadius:6,color:'#00C896',fontWeight:700,cursor:'pointer',fontFamily:'inherit',fontSize:12,minWidth:100}}>Estoque Flex</button>
+                        </div>
+                        <div style={{display:'flex',gap:6}}>
+                          <input value={moveTarget} onChange={e=>setMoveTarget(e.target.value)} placeholder="Ou digite posição: R2-P01A-A1" style={{flex:1,padding:'8px 10px',background:'#161820',border:'1px solid #1E2028',borderRadius:6,color:'#fff',fontSize:12,fontFamily:'inherit',outline:'none'}} />
+                          <button onClick={()=>{if(moveTarget)moveCell(moveTarget);}} style={{padding:'8px 14px',background:'#1e3a5f',border:'none',borderRadius:6,color:'#93c5fd',fontWeight:700,cursor:'pointer',fontFamily:'inherit',fontSize:12}}>Ir</button>
+                        </div>
+                        <button onClick={()=>setShowMoveMenu(false)} style={{width:'100%',marginTop:6,padding:'6px',background:'transparent',border:'none',color:'#8B8D97',cursor:'pointer',fontFamily:'inherit',fontSize:11}}>Cancelar</button>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
           </div>
