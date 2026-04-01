@@ -221,7 +221,7 @@ export default function Wms() {
     try {
       await saveWmsData(next);
       showToast("Salvo na nuvem ☁️");
-      logAction(user, 'WMS_SAVE', `Posição ${editId} atualizada`).catch(()=>{});
+      logAction(user, 'WMS_SAVE', `Posição ${sel} atualizada`).catch(()=>{});
     } catch(e) {
       console.error("Save error:", e);
       showToast("Erro ao salvar: " + (e.message||''), "warn");
@@ -238,7 +238,7 @@ export default function Wms() {
     try {
       await saveWmsData(next);
       showToast("Posição limpa");
-      logAction(user, 'WMS_CLEAR', `Posição ${editId} limpa`).catch(()=>{});
+      logAction(user, 'WMS_CLEAR', `Posição ${sel} limpa`).catch(()=>{});
     } catch(e) {
       console.error("Clear error:", e);
       showToast("Erro ao limpar: " + (e.message||''), "warn");
