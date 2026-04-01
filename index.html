@@ -2,14 +2,37 @@
 <html lang="pt-BR">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Seu Full — Soluções operacionais completas para sua logística</title>
-    <link rel="icon" type="image/png" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAADSklEQVR4nO2WP28cZRCHn3l3b/fufPYlsX127CB8RooBOUhIoQgNiAYk+ARpkCgoIvEF+ABI4J6OIk1oQgOhIEZ0SBGRYmRTYAJRjOMEO8Y5+3ze/+9Q7Fl2w906QTKFp1qttDvP+3vnNzPCrc+VYwxznMlPAE4A/hcA7lN/aRXpPiqAkYP3qqgREPmXj58BQGz355US6nQFzCxEKZJZtOqhJQeSDMIU+jAcDUAVrfnIXkxleR1vow1APFIjaA6jpwcYvX6H2vI6268+x9ZbM0iUoD2UKAag5CepeJz5YZnRb3+hvNbChAkA1ncJJ0/z6PJFhn5eZWT+V6xr2Hr7JQjpqUIhAAHUczn3xY+M3ljK71YgrfmIgtOJGLi7QfOzedKaRzQ2iPXdbnH0jr4AYnPZG18t0Ph6kaziEU7UefzeBfamR1AjVO9t0rixRHn1CSbOEKtgi42Y3gAK6jmUHm4z9s0i1nMJps7wx8fvkA3XYC9GopTobJ3O+TGm527irbf7Fl5hALGK+iXqd/7EbQVY32Xt8mtkp6rIboS/usULc98DYH0HE6VoyUGT7MCWzwKQX75SftBCUkt8rkYwNQydGC27mDij/OAJ6ppcciNY16HUDjFBUkiJYkWY2dyCjuk2GCC1xKM17n/0JiqCaH7n6hhMkhFO1CFKe1qwP4ACIsQjNdR18DZ38TfahM0RpBOT1iv8/e5sfnrH5GCdJG/wViG1fVXoOQtUgDRj58IEtuxiwpSz1xfACDrg5W13J4LUIkFC85PvmL3yJbMfXqP62wb4bl839B5GRpAgIXhxnNbF55E0Y2hhlalPb1K5t5nbzUBlZYvm3Dz12yt46zvszjTYe3kcCZO+xdi3BlSAJGPtg9cpP9qm+vtjTt1eYWhxjWhsCIzg/7WDCRMkzWjPTrB65Q3ItEgfQgotpVbBd3HbIZNXb1H/6T7OXoykNu8VJUNW8WhdarL2/iWyqgdxWsiKxQD2IUoOeA6VuxsMLj3EW98BhbgxSPuVSYLzDYjSvPj+kz5wOIxAmkGSEUyPEsyMQ9d6iOTjtxPnVV8w+dEA9hMJECVIEB8sHPsLyBESPx3AIRB1Dic7euL9OPad8ATgBODYAf4BCUNaw4i+/vwAAAAASUVORK5CYII=" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <meta name="theme-color" content="#00C896" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Seu Full" />
+    <meta name="description" content="Seu Full Particular — WMS & Logística para E-commerce" />
+    <link rel="manifest" href="/manifest.json" />
+    <link rel="icon" href="/icon-192.png" type="image/png" />
+    <link rel="apple-touch-icon" href="/icon-192.png" />
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <title>Seu Full — Soluções operacionais completas para sua logística</title>
+    <style>
+      * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+      html, body { margin: 0; padding: 0; overscroll-behavior: none; }
+      body { font-family: 'Outfit', sans-serif; }
+      input, select, textarea, button { font-size: 16px !important; }
+      @media (max-width: 768px) {
+        .hide-mobile { display: none !important; }
+      }
+    </style>
   </head>
   <body>
     <div id="root"></div>
     <script type="module" src="/main.jsx"></script>
+    <script>
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('/sw.js').catch(() => {});
+        });
+      }
+    </script>
   </body>
 </html>

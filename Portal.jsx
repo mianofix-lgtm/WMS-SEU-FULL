@@ -471,6 +471,19 @@ const CSS = `
 .pm-at{padding:5px 10px;font-size:11px;font-weight:700;}
 .pm-ag{display:grid;grid-template-columns:repeat(10,1fr);gap:2px;padding:5px;}
 .pm-as{height:26px;border-radius:3px;display:flex;align-items:center;justify-content:center;}
+@media(max-width:768px){
+  .p-kpis{flex-direction:row;gap:6px;overflow-x:auto;}
+  .p-kpi{min-width:100px;padding:10px 12px;}
+  .p-kpi-v{font-size:20px;}
+  .p-tabs{overflow-x:auto;}
+  .p-tab{padding:8px 14px;font-size:12px;white-space:nowrap;}
+  .pm-map{padding:10px;}
+  .pm-map>*{min-width:750px;}
+  .pm-cell{width:24px;height:20px;}
+  .p-table td,.p-table th{padding:7px 10px;font-size:12px;}
+  .p-modal{width:95%;max-height:85vh;padding:16px;}
+  .p-nav{padding:4px 8px;font-size:10px;}
+}
 `;
 
 const S = {

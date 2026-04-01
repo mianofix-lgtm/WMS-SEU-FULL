@@ -411,7 +411,18 @@ tr:nth-child(even){background:#fafafa;}
 
   return (
     <div style={S.page}>
-      <style>{`@keyframes pulse{0%,100%{opacity:1;}50%{opacity:.4;}}`}</style>
+      <style>{`
+@keyframes pulse{0%,100%{opacity:1;}50%{opacity:.4;}}
+@media(max-width:768px){
+  .bill-controls{flex-direction:column!important;gap:10px!important;}
+  .bill-kpis{flex-direction:column!important;gap:8px!important;}
+  .bill-kpi{min-width:auto!important;}
+  .bill-form{flex-direction:column!important;gap:8px!important;}
+  .bill-form input,.bill-form select{width:100%!important;min-height:44px!important;}
+  .bill-table-wrap{overflow-x:auto!important;-webkit-overflow-scrolling:touch;}
+  .bill-nav{display:none!important;}
+}
+`}</style>
 
       {/* Header */}
       <header style={S.header}>
@@ -431,7 +442,7 @@ tr:nth-child(even){background:#fafafa;}
 
       <div style={S.main}>
         {/* Client selector + month */}
-        <div style={S.controls}>
+        <div className='bill-controls' style={S.controls}>
           <div>
             <label style={S.label}>Cliente</label>
             <select value={selClient||''} onChange={e=>setSelClient(e.target.value)} style={S.select}>
@@ -449,7 +460,7 @@ tr:nth-child(even){background:#fafafa;}
         </div>
 
         {/* KPIs */}
-        <div style={S.kpiRow}>
+        <div className='bill-kpis' style={S.kpiRow}>
           <div style={S.kpi}>
             <div style={S.kpiL}>Pallets (proporcional)</div>
             <div style={S.kpiV}>R$ {totals.finalPalletCost.toLocaleString('pt-BR',{minimumFractionDigits:2})}</div>
@@ -556,7 +567,7 @@ tr:nth-child(even){background:#fafafa;}
             {/* Add sale form */}
             <div style={{...S.card,marginBottom:16}}>
               <h3 style={{fontSize:14,fontWeight:700,color:'#00C896',marginBottom:12}}>Registrar Venda / Serviço</h3>
-              <div style={{display:'flex',gap:10,flexWrap:'wrap',alignItems:'flex-end'}}>
+              <div className='bill-form' style={{display:'flex',gap:10,flexWrap:'wrap',alignItems:'flex-end'}}>
                 <div><label style={S.label}>Data Venda</label><input type="date" value={newSale.dataVenda} onChange={e=>setNewSale(f=>({...f,dataVenda:e.target.value}))} style={{...S.input,width:140}} /></div>
                 <div><label style={S.label}>Nº Venda/Pedido</label><input value={newSale.numero} onChange={e=>setNewSale(f=>({...f,numero:e.target.value}))} style={{...S.input,width:140}} placeholder="MLB-123..." /></div>
                 <div><label style={S.label}>Nº Envio/Frete</label><input value={newSale.numEnvio} onChange={e=>setNewSale(f=>({...f,numEnvio:e.target.value}))} style={{...S.input,width:140}} placeholder="Nº envio..." /></div>
