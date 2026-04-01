@@ -149,7 +149,7 @@ export default function Billing() {
     setNewSale({numero:'',produto:'',canal:newSale.canal,qtd:'1',kitTier:'small',valorCustom:'',descCustom:'',dataVenda:'',numEnvio:''});
     setEditingSale(null);
     showToast(editingSale ? 'Venda atualizada!' : 'Venda registrada!');
-    logAction(user, editingSale ? 'BILLING_EDIT' : 'BILLING_ADD', `${selClient}: ${sale.canal} - ${sale.produto} x${sale.qtd} = R$${sale.valor.toFixed(2)}`);
+    logAction(user, editingSale ? 'BILLING_EDIT' : 'BILLING_ADD', `${selClient}: ${sale.canal} - ${sale.produto} x${sale.qtd} = R$${sale.valor.toFixed(2)}`).catch(()=>{});
   }
 
   function calcSaleValue(s) {
@@ -190,7 +190,7 @@ export default function Billing() {
     setSales(next);
     await saveClientData(next, pallets);
     showToast('Venda removida');
-    logAction(user, 'BILLING_REMOVE', `${selClient}: lançamento removido`);
+    logAction(user, 'BILLING_REMOVE', `${selClient}: lançamento removido`).catch(()=>{});
   }
 
   // ─── Pallets ───

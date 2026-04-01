@@ -51,7 +51,7 @@ export default function Admin() {
       await setDoc(doc(db, 'config', 'lastBackup'), { date: new Date().toISOString() });
       setLastBackup(new Date().toISOString());
       showToast('Backup realizado!');
-      logAction(user, 'BACKUP', 'Backup manual realizado');
+      logAction(user, 'BACKUP', 'Backup manual realizado').catch(()=>{});
     } catch(e) { showToast('Erro no backup: ' + e.message); }
     setBackingUp(false);
   }
@@ -69,12 +69,12 @@ export default function Admin() {
       if (data.coletas) await setDoc(doc(db, 'wms', 'coletas'), data.coletas);
       if (data.billing) { for (const [id, val] of Object.entries(data.billing)) { await setDoc(doc(db, 'billing', id), val); } }
       showToast('Backup restaurado! Recarregue a página.');
-      logAction(user, 'RESTORE', 'Backup restaurado de ' + data.date);
+      logAction(user, 'RESTORE', 'Backup restaurado de ' + data.date).catch(()=>{});
     } catch(e) { showToast('Erro: ' + e.message); }
   }
 
   async function loadPrices() { const p = await getPricing(); setPrices(p); }
-  async function handleSavePrices() { await savePricing(prices); setPricesSaved(true); setTimeout(()=>setPricesSaved(false),3000); showToast('Preços atualizados!'); logAction(user, 'PRICING_UPDATE', 'Tabela de preços atualizada'); }
+  async function handleSavePrices() { await savePricing(prices); setPricesSaved(true); setTimeout(()=>setPricesSaved(false),3000); showToast('Preços atualizados!'); logAction(user, 'PRICING_UPDATE', 'Tabela de preços atualizada').catch(()=>{}); }
 
   async function loadUsers() {
     setLoading(true);
@@ -86,7 +86,7 @@ export default function Admin() {
 
   async function handleApprove() {
     if (!lojaInput.trim()) return;
-    try { await approveUser(approveModal.uid, lojaInput.trim()); showToast(`${approveModal.nome||approveModal.email} aprovado!`); logAction(user, 'USER_APPROVE', `${approveModal.nome||approveModal.email} aprovado como ${lojaInput}`); setApproveModal(null); setLojaInput(''); loadUsers(); } catch(e) { showToast('Erro: '+e.message); }
+    try { await approveUser(approveModal.uid, lojaInput.trim()); showToast(`${approveModal.nome||approveModal.email} aprovado!`); logAction(user, 'USER_APPROVE', `${approveModal.nome||approveModal.email} aprovado como ${lojaInput}`).catch(()=>{}); setApproveModal(null); setLojaInput(''); loadUsers(); } catch(e) { showToast('Erro: '+e.message); }
   }
 
   async function handleReject(u) {
