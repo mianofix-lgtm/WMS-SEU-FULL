@@ -1,0 +1,14 @@
+{
+  "name": "Seu Full Particular",
+  "short_name": "Seu Full",
+  "description": "WMS & Logística - Seu Full Particular",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#08090D",
+  "theme_color": "#00C896",
+  "orientation": "any",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
