@@ -186,12 +186,12 @@ export default function Wms() {
         // Backwards compat: convert old single-product to multi-product
         if (!existing.produtos) {
           const prod = { sku: existing.sku||'', nome: existing.nome||'', qtd: existing.qtd||'', valorUnit: existing.valorUnit||'', curva: existing.curva||'' };
-          setForm({ loja: existing.loja||'', obs: existing.obs||'', produtos: [prod] });
+          setForm({ loja: existing.loja||'', obs: existing.obs||'', dataEntrada: existing.dataEntrada||'', produtos: [prod] });
         } else {
-          setForm({...existing});
+          setForm({...existing, dataEntrada: existing.dataEntrada||''});
         }
       } else {
-        setForm({ loja:'', obs:'', produtos:[{...EMPTY_PROD}] });
+        setForm({ loja:'', obs:'', dataEntrada:'', produtos:[{...EMPTY_PROD}] });
       }
     } else {
       setAreaForm(cells[id] ? {...EMPTY_AREA, ...cells[id]} : {...EMPTY_AREA});
@@ -200,21 +200,29 @@ export default function Wms() {
 
   async function saveCell() {
     let data;
+    const today = new Date().toISOString().substring(0,10);
+    const existingCell = cells[sel];
+    const hadContent = existingCell && (existingCell.nome || existingCell.descricao || (existingCell.produtos?.length > 0 && existingCell.produtos[0]?.nome));
+    
     if (selType === "rua") {
-      // Save with both formats for backwards compat
       const prods = form.produtos.filter(p => p.nome || p.sku);
       data = {
         ...form,
         produtos: prods.length > 0 ? prods : [{...EMPTY_PROD}],
-        // Keep first product fields at root for compat
         sku: prods[0]?.sku || '',
         nome: prods[0]?.nome || '',
         qtd: prods.reduce((s,p) => s + (parseInt(p.qtd)||0), 0).toString(),
         valorUnit: prods[0]?.valorUnit || '',
         curva: prods[0]?.curva || '',
+        // Use edited date, or existing, or auto-set today
+        dataEntrada: form.dataEntrada || existingCell?.dataEntrada || today,
       };
     } else {
-      data = areaForm;
+      data = {
+        ...areaForm,
+        // Auto-set dataEntrada if not filled and has content
+        dataEntrada: areaForm.dataEntrada || existingCell?.dataEntrada || today,
+      };
     }
     const next = {...cells, [sel]: data};
     setCells(next);
@@ -232,6 +240,7 @@ export default function Wms() {
   async function clearCell() {
     if (!canDelete) { showToast("Sem permissão para apagar", "warn"); return; }
     if (!confirm("Tem certeza que deseja limpar esta posição?")) return;
+    const cleared = cells[sel];
     const next = {...cells};
     delete next[sel];
     setCells(next);
@@ -808,6 +817,8 @@ export default function Wms() {
                     ))}
                     <button onClick={()=>setForm(f=>({...f,produtos:[...(f.produtos||[]),{...EMPTY_PROD}]}))} style={{width:'100%',padding:'8px',background:'#1e3a5f',border:'1px dashed #3b82f6',borderRadius:8,color:'#93c5fd',fontWeight:600,cursor:'pointer',fontFamily:'inherit',fontSize:12,marginBottom:12}}>+ Adicionar Produto</button>
                     <div className="wms-field"><label>Observação</label><input value={form.obs} onChange={e=>setForm(f=>({...f,obs:e.target.value}))} placeholder="Notas"/></div>
+                    <div className="wms-field"><label>Data Entrada</label><input type="date" value={form.dataEntrada||''} onChange={e=>setForm(f=>({...f,dataEntrada:e.target.value}))}/></div>
+                    {form.dataEntrada && <div style={{fontSize:12,color:'#8B8D97',padding:'4px 12px',background:'#161820',borderRadius:6}}>= {Math.max(1,Math.ceil((new Date()-new Date(form.dataEntrada+'T00:00:00'))/(86400000)))} dias ocupado</div>}
                   </>
                 ) : (
                   <>
