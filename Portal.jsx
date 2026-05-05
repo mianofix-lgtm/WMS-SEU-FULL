@@ -130,7 +130,8 @@ export default function Portal() {
       if (!isInternal && clientLoja && !cell.loja?.trim().toUpperCase().includes(clientLoja.trim().toUpperCase())) continue;
       for (const prod of prods) {
         if (search && !(prod.nome||'').toLowerCase().includes(search.toLowerCase()) && !(prod.sku||'').toLowerCase().includes(search.toLowerCase())) continue;
-        items.push({ id, loja: cell.loja, dataEntrada: cell.dataEntrada, ...prod });
+        const fornEff = (prod.fornecedor && prod.fornecedor.trim()) ? prod.fornecedor : (cell.fornecedor || '');
+        items.push({ id, loja: cell.loja, dataEntrada: cell.dataEntrada, fornecedor: fornEff, ...prod, fornecedor: fornEff });
       }
     }
     return items.sort((a, b) => (a.nome || '').localeCompare(b.nome || ''));
@@ -225,9 +226,9 @@ export default function Portal() {
           </div>
           <div className="p-card">
             <table className="p-table"><thead><tr>
-              <th>Endereço</th><th>SKU</th><th>Produto</th><th>Curva</th>{isInternal && <th>Loja</th>}<th style={{textAlign:'right'}}>Qtd</th><th>Entrada</th>
+              <th>Endereço</th><th>SKU</th><th>Produto</th><th>Curva</th>{isInternal && <th>Loja</th>}<th>Fornecedor</th><th style={{textAlign:'right'}}>Qtd</th><th>Entrada</th>
             </tr></thead><tbody>
-              {stockItems.length === 0 ? <tr><td colSpan={7} style={{textAlign:'center',color:'#8B8D97',padding:40}}>{search ? 'Nenhum resultado.' : 'Nenhum produto.'}</td></tr>
+              {stockItems.length === 0 ? <tr><td colSpan={8} style={{textAlign:'center',color:'#8B8D97',padding:40}}>{search ? 'Nenhum resultado.' : 'Nenhum produto.'}</td></tr>
               : stockItems.map((item,i) => (
                 <tr key={`${item.id}-${i}`} onClick={()=>setSelectedPos({id:item.id, cell:cells[item.id]})} style={{cursor:'pointer'}}>
                   <td style={{fontWeight:700,color:'#00C896',fontFamily:'monospace',fontSize:12}}>{item.id}</td>
@@ -235,6 +236,7 @@ export default function Portal() {
                   <td style={{maxWidth:300}}>{item.nome||'-'}</td>
                   <td>{item.curva && <span className={`p-curva p-curva-${item.curva}`}>{item.curva}</span>}</td>
                   {isInternal && <td style={{fontSize:13}}>{item.loja||'-'}</td>}
+                  <td style={{fontSize:12,color:item.fornecedor?'#fdba74':'#8B8D97'}}>{item.fornecedor||'-'}</td>
                   <td style={{textAlign:'right',fontWeight:700}}>{parseInt(item.qtd||0).toLocaleString('pt-BR')}</td>
                   <td style={{fontSize:12,color:'#8B8D97'}}>{item.dataEntrada ? new Date(item.dataEntrada+'T00:00:00').toLocaleDateString('pt-BR') : '-'}</td>
                 </tr>
