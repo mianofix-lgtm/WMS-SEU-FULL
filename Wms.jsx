@@ -16,13 +16,16 @@ const WAREHOUSE = {
   ],
 };
 const LADOS = ["A","B"];
-const EMPTY_PROD = { sku:"", nome:"", qtd:"", valorUnit:"", curva:"" };
-const EMPTY = { loja:"", obs:"", produtos:[{...EMPTY_PROD}] };
-const EMPTY_AREA = { descricao:"", loja:"", qtd:"", valorUnit:"", obs:"", paletes:"", dataEntrada:"" };
+const EMPTY_PROD = { sku:"", nome:"", qtd:"", valorUnit:"", curva:"", fornecedor:"" };
+const EMPTY = { loja:"", obs:"", fornecedor:"", produtos:[{...EMPTY_PROD}] };
+const EMPTY_AREA = { descricao:"", loja:"", qtd:"", valorUnit:"", obs:"", paletes:"", dataEntrada:"", fornecedor:"" };
 const fullSlots = Array.from({length:40},(_,i)=>`FULL-${i+1}`);
 const flexSlots = Array.from({length:60},(_,i)=>`FLEX-${i+1}`);
 const prodSlots = Array.from({length:30},(_,i)=>`PROD-${i+1}`);
 const recebSlots = Array.from({length:30},(_,i)=>`RECEB-${i+1}`);
+
+const LOJAS_DEFAULT = ["Lugu","ASM","Iscali","Mianofix","MC Souza","Mega Mix","Jondri","De Perfume","Trauss"];
+const FORN_DEFAULT = ["Nexttrading/Exbom","May","Importação Própria"];
 
 function cellId(r,v,l,a){ return `${r}-P${String(v).padStart(2,"0")}${l}-A${a}`; }
 
@@ -69,6 +72,18 @@ export default function Wms() {
   const [showMoveMenu, setShowMoveMenu] = useState(false);
   const [moveTarget, setMoveTarget] = useState('');
 
+  // Configurações: lojas e fornecedores (gerenciáveis pela aba Configurações)
+  const [lojas, setLojas] = useState(LOJAS_DEFAULT);
+  const [fornecedores, setFornecedores] = useState(FORN_DEFAULT);
+  const [novaLoja, setNovaLoja] = useState('');
+  const [novoForn, setNovoForn] = useState('');
+
+  // Inventário: filtros e modo de visualização
+  const [invView, setInvView] = useState('sku'); // 'sku' | 'cliente' | 'fornecedor'
+  const [invLoja, setInvLoja] = useState('');
+  const [invForn, setInvForn] = useState('');
+  const [invCurva, setInvCurva] = useState('');
+
   // Permissions
   const perms = getPerms(user?.role);
   const canDelete = perms.canDelete;
@@ -80,7 +95,66 @@ export default function Wms() {
   useEffect(() => {
     loadCloud();
     loadColetaHistory();
+    loadConfig();
   }, []);
+
+  async function loadConfig() {
+    try {
+      const d = await getDoc(doc(db, 'wms', 'config'));
+      if (d.exists()) {
+        const data = d.data();
+        if (Array.isArray(data.lojas) && data.lojas.length > 0) setLojas(data.lojas);
+        if (Array.isArray(data.fornecedores) && data.fornecedores.length > 0) setFornecedores(data.fornecedores);
+      } else {
+        // Primeira vez: salva defaults no Firestore
+        await setDoc(doc(db, 'wms', 'config'), { lojas: LOJAS_DEFAULT, fornecedores: FORN_DEFAULT, updatedAt: new Date().toISOString() });
+      }
+    } catch(e) { console.error('loadConfig error:', e); }
+  }
+
+  async function saveLojas(arr) {
+    setLojas(arr);
+    try {
+      await setDoc(doc(db, 'wms', 'config'), { lojas: arr, fornecedores, updatedAt: new Date().toISOString() }, { merge: true });
+      logAction(user, 'CONFIG', `Lojas atualizadas (${arr.length})`).catch(()=>{});
+    } catch(e) { showToast('Erro ao salvar lojas', 'warn'); }
+  }
+
+  async function saveFornecedores(arr) {
+    setFornecedores(arr);
+    try {
+      await setDoc(doc(db, 'wms', 'config'), { lojas, fornecedores: arr, updatedAt: new Date().toISOString() }, { merge: true });
+      logAction(user, 'CONFIG', `Fornecedores atualizados (${arr.length})`).catch(()=>{});
+    } catch(e) { showToast('Erro ao salvar fornecedores', 'warn'); }
+  }
+
+  function addLoja() {
+    const v = novaLoja.trim();
+    if (!v) return;
+    if (lojas.some(l => l.toLowerCase() === v.toLowerCase())) { showToast('Loja já existe','warn'); return; }
+    saveLojas([...lojas, v].sort((a,b)=>a.localeCompare(b)));
+    setNovaLoja('');
+    showToast('Loja adicionada');
+  }
+
+  function removeLoja(nome) {
+    if (!confirm(`Remover a loja "${nome}"? Posições já cadastradas com essa loja não serão afetadas.`)) return;
+    saveLojas(lojas.filter(l => l !== nome));
+  }
+
+  function addForn() {
+    const v = novoForn.trim();
+    if (!v) return;
+    if (fornecedores.some(f => f.toLowerCase() === v.toLowerCase())) { showToast('Fornecedor já existe','warn'); return; }
+    saveFornecedores([...fornecedores, v].sort((a,b)=>a.localeCompare(b)));
+    setNovoForn('');
+    showToast('Fornecedor adicionado');
+  }
+
+  function removeForn(nome) {
+    if (!confirm(`Remover o fornecedor "${nome}"? Posições já cadastradas não serão afetadas.`)) return;
+    saveFornecedores(fornecedores.filter(f => f !== nome));
+  }
 
   async function loadColetaHistory() {
     try {
@@ -192,13 +266,15 @@ export default function Wms() {
       if (existing) {
         // Backwards compat: convert old single-product to multi-product
         if (!existing.produtos) {
-          const prod = { sku: existing.sku||'', nome: existing.nome||'', qtd: existing.qtd||'', valorUnit: existing.valorUnit||'', curva: existing.curva||'' };
-          setForm({ loja: existing.loja||'', obs: existing.obs||'', dataEntrada: existing.dataEntrada||'', produtos: [prod] });
+          const prod = { sku: existing.sku||'', nome: existing.nome||'', qtd: existing.qtd||'', valorUnit: existing.valorUnit||'', curva: existing.curva||'', fornecedor: existing.fornecedor||'' };
+          setForm({ loja: existing.loja||'', obs: existing.obs||'', fornecedor: existing.fornecedor||'', dataEntrada: existing.dataEntrada||'', produtos: [prod] });
         } else {
-          setForm({...existing, dataEntrada: existing.dataEntrada||''});
+          // Garante que cada produto tem o campo fornecedor
+          const prods = existing.produtos.map(p => ({ ...EMPTY_PROD, ...p }));
+          setForm({ ...existing, fornecedor: existing.fornecedor||'', produtos: prods, dataEntrada: existing.dataEntrada||'' });
         }
       } else {
-        setForm({ loja:'', obs:'', dataEntrada:'', produtos:[{...EMPTY_PROD}] });
+        setForm({ loja:'', obs:'', fornecedor:'', dataEntrada:'', produtos:[{...EMPTY_PROD}] });
       }
     } else {
       setAreaForm(cells[id] ? {...EMPTY_AREA, ...cells[id]} : {...EMPTY_AREA});
@@ -426,6 +502,7 @@ export default function Wms() {
           <button className={`wms-tab ${tab==="inventario"?"on":""}`} onClick={()=>setTab("inventario")}>Inventário</button>
           {canSeeValues && <button className={`wms-tab ${tab==="financeiro"?"on":""}`} onClick={()=>setTab("financeiro")}>Financeiro</button>}
           <button className={`wms-tab ${tab==="insumos"?"on":""}`} onClick={()=>setTab("insumos")}>Insumos</button>
+          {(user?.role === 'diretor' || user?.role === 'comercial') && <button className={`wms-tab ${tab==="config"?"on":""}`} onClick={()=>setTab("config")}>Configurações</button>}
           <div className="wms-kpis">
             <div className="wms-kpi"><span className="wms-kpi-l">SKUs</span><span className="wms-kpi-v">{stats.skus}</span></div>
             <div className="wms-kpi"><span className="wms-kpi-l">Itens</span><span className="wms-kpi-v">{stats.items.toLocaleString("pt-BR")}</span></div>
@@ -715,37 +792,194 @@ export default function Wms() {
         )}
         {tab === "inventario" && (
           <div className="wms-inv">
-            <input className="wms-search" placeholder="Buscar por nome, SKU ou endereço..." value={search} onChange={e=>setSearch(e.target.value)} />
-            <div className="wms-inv-table-wrap">
-              <table className="wms-inv-table">
-                <thead><tr>
-                  <th>Endereço</th><th>SKU</th><th>Produto</th><th>Curva</th><th>Loja</th><th style={{textAlign:'right'}}>Qtd</th>
-                  {canSeeValues && <th style={{textAlign:'right'}}>Val.Unit</th>}
-                  {canSeeValues && <th style={{textAlign:'right'}}>Total</th>}
-                </tr></thead>
-                <tbody>
-                  {inventory.flatMap(([id,c]) => {
-                    const prods = c.produtos && c.produtos.length > 0 && c.produtos[0].nome
-                      ? c.produtos.filter(p=>p.nome||p.sku)
-                      : c.nome || c.descricao
-                        ? [{sku:c.sku||'',nome:c.nome||c.descricao||'',qtd:c.qtd,valorUnit:c.valorUnit,curva:c.curva}]
-                        : [];
-                    return prods.map((p,pi) => (
-                      <tr key={`${id}-${pi}`} onClick={()=>openCell(id, id.startsWith("FULL")?"full":id.startsWith("FLEX")?"flex":"rua")} style={{cursor:'pointer'}}>
-                        <td style={{fontWeight:700,color:'#00C896',fontFamily:'monospace',fontSize:12}}>{id}{prods.length>1?` (${pi+1}/${prods.length})`:''}</td>
-                        <td style={{fontFamily:'monospace',fontSize:12}}>{p.sku||"-"}</td>
-                        <td>{p.nome||"-"}</td>
-                        <td>{p.curva && <span style={{padding:'2px 8px',borderRadius:4,fontSize:12,fontWeight:700,background:p.curva==='A'?'#dc262620':p.curva==='B'?'#d9770620':'#16a34a20',color:p.curva==='A'?'#fca5a5':p.curva==='B'?'#fcd34d':'#86efac'}}>{p.curva}</span>}</td>
-                        <td>{c.loja||"-"}</td>
-                        <td style={{textAlign:'right',fontWeight:700}}>{parseInt(p.qtd||0).toLocaleString("pt-BR")}</td>
-                        {canSeeValues && <td style={{textAlign:'right'}}>R$ {parseFloat(p.valorUnit||0).toFixed(2)}</td>}
-                        {canSeeValues && <td style={{textAlign:'right',fontWeight:600}}>R$ {((parseInt(p.qtd)||0)*(parseFloat(p.valorUnit)||0)).toLocaleString("pt-BR",{minimumFractionDigits:2})}</td>}
-                      </tr>
-                    ));
-                  })}
-                </tbody>
-              </table>
+            {/* View toggle */}
+            <div style={{display:'flex',gap:8,marginBottom:12,flexWrap:'wrap',alignItems:'center'}}>
+              <div style={{display:'flex',gap:4,background:'#0F1117',padding:4,borderRadius:8,border:'1px solid #1E2028'}}>
+                <button onClick={()=>setInvView('sku')} style={{padding:'8px 14px',background:invView==='sku'?'#00C896':'transparent',color:invView==='sku'?'#0F1117':'#C0C2CC',border:'none',borderRadius:6,fontWeight:700,cursor:'pointer',fontFamily:'inherit',fontSize:13}}>Por SKU</button>
+                <button onClick={()=>setInvView('cliente')} style={{padding:'8px 14px',background:invView==='cliente'?'#3b82f6':'transparent',color:invView==='cliente'?'#fff':'#C0C2CC',border:'none',borderRadius:6,fontWeight:700,cursor:'pointer',fontFamily:'inherit',fontSize:13}}>Por Cliente</button>
+                <button onClick={()=>setInvView('fornecedor')} style={{padding:'8px 14px',background:invView==='fornecedor'?'#f97316':'transparent',color:invView==='fornecedor'?'#fff':'#C0C2CC',border:'none',borderRadius:6,fontWeight:700,cursor:'pointer',fontFamily:'inherit',fontSize:13}}>Por Fornecedor</button>
+              </div>
+              <input className="wms-search" style={{flex:1,minWidth:200,margin:0}} placeholder="Buscar por nome, SKU ou endereço..." value={search} onChange={e=>setSearch(e.target.value)} />
             </div>
+
+            {/* Filters */}
+            <div style={{display:'flex',gap:8,marginBottom:12,flexWrap:'wrap'}}>
+              <select value={invLoja} onChange={e=>setInvLoja(e.target.value)} style={{padding:'8px 10px',background:'#0F1117',border:'1px solid #1E2028',borderRadius:6,color:'#fff',fontSize:13,fontFamily:'inherit',outline:'none'}}>
+                <option value="">Todas as lojas</option>
+                {lojas.map(l => <option key={l} value={l}>{l}</option>)}
+              </select>
+              <select value={invForn} onChange={e=>setInvForn(e.target.value)} style={{padding:'8px 10px',background:'#0F1117',border:'1px solid #1E2028',borderRadius:6,color:'#fff',fontSize:13,fontFamily:'inherit',outline:'none'}}>
+                <option value="">Todos fornecedores</option>
+                {fornecedores.map(f => <option key={f} value={f}>{f}</option>)}
+                <option value="__none__">— Sem fornecedor —</option>
+              </select>
+              <select value={invCurva} onChange={e=>setInvCurva(e.target.value)} style={{padding:'8px 10px',background:'#0F1117',border:'1px solid #1E2028',borderRadius:6,color:'#fff',fontSize:13,fontFamily:'inherit',outline:'none'}}>
+                <option value="">Todas curvas</option>
+                <option value="A">Curva A</option>
+                <option value="B">Curva B</option>
+                <option value="C">Curva C</option>
+              </select>
+              {(invLoja||invForn||invCurva) && <button onClick={()=>{setInvLoja('');setInvForn('');setInvCurva('');}} style={{padding:'8px 12px',background:'#dc262620',color:'#fca5a5',border:'1px solid #dc262640',borderRadius:6,cursor:'pointer',fontFamily:'inherit',fontSize:12,fontWeight:600}}>Limpar filtros</button>}
+            </div>
+
+            {(() => {
+              // Build flat product list with all metadata
+              const rows = [];
+              inventory.forEach(([id,c]) => {
+                const positionForn = c.fornecedor || '';
+                const prods = c.produtos && c.produtos.length > 0 && c.produtos[0].nome
+                  ? c.produtos.filter(p=>p.nome||p.sku)
+                  : c.nome || c.descricao
+                    ? [{sku:c.sku||'',nome:c.nome||c.descricao||'',qtd:c.qtd,valorUnit:c.valorUnit,curva:c.curva,fornecedor:c.fornecedor||''}]
+                    : [];
+                prods.forEach((p,pi) => {
+                  const fornEff = (p.fornecedor && p.fornecedor.trim()) ? p.fornecedor : positionForn;
+                  rows.push({id, posIndex:pi, total:prods.length, loja:c.loja||'', fornecedor: fornEff, ...p, qtdN: parseInt(p.qtd||0)||0, valorN: (parseInt(p.qtd||0)||0)*(parseFloat(p.valorUnit||0)||0)});
+                });
+              });
+              // Apply filters
+              const filtered = rows.filter(r => {
+                if (invLoja && r.loja !== invLoja) return false;
+                if (invForn === '__none__' && r.fornecedor) return false;
+                else if (invForn && invForn !== '__none__' && r.fornecedor !== invForn) return false;
+                if (invCurva && r.curva !== invCurva) return false;
+                return true;
+              });
+
+              if (invView === 'cliente') {
+                const byLoja = {};
+                filtered.forEach(r => {
+                  const k = r.loja || 'Sem Loja';
+                  if (!byLoja[k]) byLoja[k] = { items:[], qtd:0, valor:0 };
+                  byLoja[k].items.push(r);
+                  byLoja[k].qtd += r.qtdN;
+                  byLoja[k].valor += r.valorN;
+                });
+                const grupos = Object.entries(byLoja).sort(([a],[b]) => a.localeCompare(b));
+                return (
+                  <div>
+                    {grupos.length === 0 ? <div style={{padding:40,textAlign:'center',color:'#8B8D97'}}>Nenhum resultado.</div> :
+                    grupos.map(([loja,g]) => (
+                      <div key={loja} style={{background:'#0F1117',border:'1px solid #1E2028',borderRadius:10,marginBottom:12,overflow:'hidden'}}>
+                        <div style={{padding:'12px 16px',background:'#3b82f615',borderBottom:'1px solid #3b82f640',display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:8}}>
+                          <div style={{fontSize:15,fontWeight:800,color:'#93c5fd'}}>{loja}</div>
+                          <div style={{display:'flex',gap:16,fontSize:12,color:'#C0C2CC'}}>
+                            <span>{g.items.length} itens</span>
+                            <span><strong>{g.qtd.toLocaleString('pt-BR')}</strong> un</span>
+                            {canSeeValues && <span style={{color:'#00C896',fontWeight:700}}>R$ {g.valor.toLocaleString('pt-BR',{minimumFractionDigits:2})}</span>}
+                          </div>
+                        </div>
+                        <div className="wms-inv-table-wrap" style={{maxHeight:320,overflow:'auto'}}>
+                          <table className="wms-inv-table">
+                            <thead><tr>
+                              <th>Endereço</th><th>SKU</th><th>Produto</th><th>Curva</th><th>Fornecedor</th><th style={{textAlign:'right'}}>Qtd</th>
+                              {canSeeValues && <th style={{textAlign:'right'}}>Total</th>}
+                            </tr></thead>
+                            <tbody>
+                              {g.items.map((r,i) => (
+                                <tr key={`${r.id}-${i}`} onClick={()=>openCell(r.id, r.id.startsWith("FULL")?"full":r.id.startsWith("FLEX")?"flex":"rua")} style={{cursor:'pointer'}}>
+                                  <td style={{fontWeight:700,color:'#00C896',fontFamily:'monospace',fontSize:12}}>{r.id}{r.total>1?` (${r.posIndex+1}/${r.total})`:''}</td>
+                                  <td style={{fontFamily:'monospace',fontSize:12}}>{r.sku||"-"}</td>
+                                  <td>{r.nome||"-"}</td>
+                                  <td>{r.curva && <span style={{padding:'2px 8px',borderRadius:4,fontSize:12,fontWeight:700,background:r.curva==='A'?'#dc262620':r.curva==='B'?'#d9770620':'#16a34a20',color:r.curva==='A'?'#fca5a5':r.curva==='B'?'#fcd34d':'#86efac'}}>{r.curva}</span>}</td>
+                                  <td style={{fontSize:12,color:r.fornecedor?'#fdba74':'#8B8D97'}}>{r.fornecedor||'-'}</td>
+                                  <td style={{textAlign:'right',fontWeight:700}}>{r.qtdN.toLocaleString('pt-BR')}</td>
+                                  {canSeeValues && <td style={{textAlign:'right',fontWeight:600}}>R$ {r.valorN.toLocaleString('pt-BR',{minimumFractionDigits:2})}</td>}
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                );
+              }
+
+              if (invView === 'fornecedor') {
+                const byForn = {};
+                filtered.forEach(r => {
+                  const k = r.fornecedor || 'Sem Fornecedor';
+                  if (!byForn[k]) byForn[k] = { items:[], qtd:0, valor:0 };
+                  byForn[k].items.push(r);
+                  byForn[k].qtd += r.qtdN;
+                  byForn[k].valor += r.valorN;
+                });
+                const grupos = Object.entries(byForn).sort(([a],[b]) => a.localeCompare(b));
+                return (
+                  <div>
+                    {grupos.length === 0 ? <div style={{padding:40,textAlign:'center',color:'#8B8D97'}}>Nenhum resultado.</div> :
+                    grupos.map(([forn,g]) => (
+                      <div key={forn} style={{background:'#0F1117',border:'1px solid #1E2028',borderRadius:10,marginBottom:12,overflow:'hidden'}}>
+                        <div style={{padding:'12px 16px',background:'#f9731615',borderBottom:'1px solid #f9731640',display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:8}}>
+                          <div style={{fontSize:15,fontWeight:800,color:'#fdba74'}}>{forn}</div>
+                          <div style={{display:'flex',gap:16,fontSize:12,color:'#C0C2CC'}}>
+                            <span>{g.items.length} itens</span>
+                            <span><strong>{g.qtd.toLocaleString('pt-BR')}</strong> un</span>
+                            {canSeeValues && <span style={{color:'#00C896',fontWeight:700}}>R$ {g.valor.toLocaleString('pt-BR',{minimumFractionDigits:2})}</span>}
+                          </div>
+                        </div>
+                        <div className="wms-inv-table-wrap" style={{maxHeight:320,overflow:'auto'}}>
+                          <table className="wms-inv-table">
+                            <thead><tr>
+                              <th>Endereço</th><th>SKU</th><th>Produto</th><th>Curva</th><th>Loja</th><th style={{textAlign:'right'}}>Qtd</th>
+                              {canSeeValues && <th style={{textAlign:'right'}}>Total</th>}
+                            </tr></thead>
+                            <tbody>
+                              {g.items.map((r,i) => (
+                                <tr key={`${r.id}-${i}`} onClick={()=>openCell(r.id, r.id.startsWith("FULL")?"full":r.id.startsWith("FLEX")?"flex":"rua")} style={{cursor:'pointer'}}>
+                                  <td style={{fontWeight:700,color:'#00C896',fontFamily:'monospace',fontSize:12}}>{r.id}{r.total>1?` (${r.posIndex+1}/${r.total})`:''}</td>
+                                  <td style={{fontFamily:'monospace',fontSize:12}}>{r.sku||"-"}</td>
+                                  <td>{r.nome||"-"}</td>
+                                  <td>{r.curva && <span style={{padding:'2px 8px',borderRadius:4,fontSize:12,fontWeight:700,background:r.curva==='A'?'#dc262620':r.curva==='B'?'#d9770620':'#16a34a20',color:r.curva==='A'?'#fca5a5':r.curva==='B'?'#fcd34d':'#86efac'}}>{r.curva}</span>}</td>
+                                  <td style={{fontSize:12,color:'#93c5fd'}}>{r.loja||'-'}</td>
+                                  <td style={{textAlign:'right',fontWeight:700}}>{r.qtdN.toLocaleString('pt-BR')}</td>
+                                  {canSeeValues && <td style={{textAlign:'right',fontWeight:600}}>R$ {r.valorN.toLocaleString('pt-BR',{minimumFractionDigits:2})}</td>}
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                );
+              }
+
+              // Default: Por SKU (lista plana)
+              const filteredBySearch = filtered.filter(r => {
+                if (!search) return true;
+                const s = search.toLowerCase();
+                return (r.nome||'').toLowerCase().includes(s) || (r.sku||'').toLowerCase().includes(s) || r.id.toLowerCase().includes(s) || (r.loja||'').toLowerCase().includes(s) || (r.fornecedor||'').toLowerCase().includes(s);
+              });
+              return (
+                <div className="wms-inv-table-wrap">
+                  <table className="wms-inv-table">
+                    <thead><tr>
+                      <th>Endereço</th><th>SKU</th><th>Produto</th><th>Curva</th><th>Loja</th><th>Fornecedor</th><th style={{textAlign:'right'}}>Qtd</th>
+                      {canSeeValues && <th style={{textAlign:'right'}}>Val.Unit</th>}
+                      {canSeeValues && <th style={{textAlign:'right'}}>Total</th>}
+                    </tr></thead>
+                    <tbody>
+                      {filteredBySearch.length === 0 ? <tr><td colSpan={canSeeValues?9:7} style={{textAlign:'center',color:'#8B8D97',padding:40}}>Nenhum resultado.</td></tr> :
+                      filteredBySearch.map((r,i) => (
+                        <tr key={`${r.id}-${i}`} onClick={()=>openCell(r.id, r.id.startsWith("FULL")?"full":r.id.startsWith("FLEX")?"flex":"rua")} style={{cursor:'pointer'}}>
+                          <td style={{fontWeight:700,color:'#00C896',fontFamily:'monospace',fontSize:12}}>{r.id}{r.total>1?` (${r.posIndex+1}/${r.total})`:''}</td>
+                          <td style={{fontFamily:'monospace',fontSize:12}}>{r.sku||"-"}</td>
+                          <td>{r.nome||"-"}</td>
+                          <td>{r.curva && <span style={{padding:'2px 8px',borderRadius:4,fontSize:12,fontWeight:700,background:r.curva==='A'?'#dc262620':r.curva==='B'?'#d9770620':'#16a34a20',color:r.curva==='A'?'#fca5a5':r.curva==='B'?'#fcd34d':'#86efac'}}>{r.curva}</span>}</td>
+                          <td style={{fontSize:12,color:'#93c5fd'}}>{r.loja||"-"}</td>
+                          <td style={{fontSize:12,color:r.fornecedor?'#fdba74':'#8B8D97'}}>{r.fornecedor||"-"}</td>
+                          <td style={{textAlign:'right',fontWeight:700}}>{r.qtdN.toLocaleString("pt-BR")}</td>
+                          {canSeeValues && <td style={{textAlign:'right'}}>R$ {parseFloat(r.valorUnit||0).toFixed(2)}</td>}
+                          {canSeeValues && <td style={{textAlign:'right',fontWeight:600}}>R$ {r.valorN.toLocaleString("pt-BR",{minimumFractionDigits:2})}</td>}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              );
+            })()}
           </div>
         )}
 
@@ -881,6 +1115,84 @@ export default function Wms() {
           </div>
         )}
 
+        {/* ─── CONFIGURAÇÕES TAB ─── */}
+        {tab === "config" && (user?.role === 'diretor' || user?.role === 'comercial') && (
+          <div style={{padding:24}}>
+            <h2 style={{fontSize:18,fontWeight:800,marginBottom:4}}>Configurações</h2>
+            <p style={{fontSize:12,color:'#8B8D97',marginBottom:24}}>Gerencie a lista de clientes (lojas) e fornecedores. Mudanças aplicam imediatamente nos modais do WMS.</p>
+
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:20}}>
+
+              {/* CLIENTES (LOJAS) */}
+              <div style={{background:'#0F1117',border:'1px solid #1E2028',borderRadius:12,padding:18}}>
+                <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:14}}>
+                  <div>
+                    <div style={{fontSize:14,fontWeight:800,color:'#3b82f6'}}>Clientes (Lojas)</div>
+                    <div style={{fontSize:11,color:'#8B8D97',marginTop:2}}>{lojas.length} cadastrados</div>
+                  </div>
+                </div>
+                <div style={{display:'flex',gap:6,marginBottom:14}}>
+                  <input value={novaLoja} onChange={e=>setNovaLoja(e.target.value)} onKeyDown={e=>e.key==='Enter'&&addLoja()} placeholder="Nome da nova loja..." style={{flex:1,padding:'8px 10px',background:'#161820',border:'1px solid #1E2028',borderRadius:6,color:'#fff',fontSize:13,fontFamily:'inherit',outline:'none'}}/>
+                  <button onClick={addLoja} style={{padding:'8px 16px',background:'#3b82f6',color:'#fff',border:'none',borderRadius:6,fontWeight:700,cursor:'pointer',fontFamily:'inherit',fontSize:13}}>+ Adicionar</button>
+                </div>
+                <div style={{maxHeight:420,overflow:'auto'}}>
+                  {lojas.length === 0 ? <div style={{padding:24,textAlign:'center',color:'#8B8D97',fontSize:12}}>Nenhuma loja cadastrada.</div> :
+                  lojas.map(l => {
+                    const usadaEm = Object.values(cells).filter(c => (c.loja||'').trim().toLowerCase() === l.toLowerCase()).length;
+                    return (
+                      <div key={l} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'10px 12px',background:'#161820',borderRadius:6,marginBottom:6,border:'1px solid #1E2028'}}>
+                        <div>
+                          <div style={{fontWeight:700,fontSize:13,color:'#93c5fd'}}>{l}</div>
+                          <div style={{fontSize:10,color:'#8B8D97',marginTop:2}}>{usadaEm > 0 ? `${usadaEm} posição(ões) usando` : 'Não usada'}</div>
+                        </div>
+                        <button onClick={()=>removeLoja(l)} style={{background:'#dc262615',border:'1px solid #dc262630',borderRadius:4,color:'#fca5a5',fontSize:11,cursor:'pointer',padding:'4px 8px',fontFamily:'inherit'}}>Remover</button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* FORNECEDORES */}
+              <div style={{background:'#0F1117',border:'1px solid #1E2028',borderRadius:12,padding:18}}>
+                <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:14}}>
+                  <div>
+                    <div style={{fontSize:14,fontWeight:800,color:'#f97316'}}>Fornecedores</div>
+                    <div style={{fontSize:11,color:'#8B8D97',marginTop:2}}>{fornecedores.length} cadastrados</div>
+                  </div>
+                </div>
+                <div style={{display:'flex',gap:6,marginBottom:14}}>
+                  <input value={novoForn} onChange={e=>setNovoForn(e.target.value)} onKeyDown={e=>e.key==='Enter'&&addForn()} placeholder="Nome do novo fornecedor..." style={{flex:1,padding:'8px 10px',background:'#161820',border:'1px solid #1E2028',borderRadius:6,color:'#fff',fontSize:13,fontFamily:'inherit',outline:'none'}}/>
+                  <button onClick={addForn} style={{padding:'8px 16px',background:'#f97316',color:'#fff',border:'none',borderRadius:6,fontWeight:700,cursor:'pointer',fontFamily:'inherit',fontSize:13}}>+ Adicionar</button>
+                </div>
+                <div style={{maxHeight:420,overflow:'auto'}}>
+                  {fornecedores.length === 0 ? <div style={{padding:24,textAlign:'center',color:'#8B8D97',fontSize:12}}>Nenhum fornecedor cadastrado.</div> :
+                  fornecedores.map(fn => {
+                    let usadoEm = 0;
+                    Object.values(cells).forEach(c => {
+                      if ((c.fornecedor||'').trim().toLowerCase() === fn.toLowerCase()) usadoEm++;
+                      (c.produtos||[]).forEach(p => { if ((p.fornecedor||'').trim().toLowerCase() === fn.toLowerCase()) usadoEm++; });
+                    });
+                    return (
+                      <div key={fn} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'10px 12px',background:'#161820',borderRadius:6,marginBottom:6,border:'1px solid #1E2028'}}>
+                        <div>
+                          <div style={{fontWeight:700,fontSize:13,color:'#fdba74'}}>{fn}</div>
+                          <div style={{fontSize:10,color:'#8B8D97',marginTop:2}}>{usadoEm > 0 ? `${usadoEm} referência(s) ativa(s)` : 'Não usado'}</div>
+                        </div>
+                        <button onClick={()=>removeForn(fn)} style={{background:'#dc262615',border:'1px solid #dc262630',borderRadius:4,color:'#fca5a5',fontSize:11,cursor:'pointer',padding:'4px 8px',fontFamily:'inherit'}}>Remover</button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+            </div>
+
+            <div style={{marginTop:20,padding:14,background:'#3b82f615',border:'1px solid #3b82f640',borderRadius:8,fontSize:12,color:'#93c5fd'}}>
+              <strong>💡 Dica:</strong> remover uma loja ou fornecedor da lista <strong>não apaga</strong> as posições já cadastradas com esse nome. Só remove da lista de seleção rápida no modal. Se quiser, você ainda pode digitar manualmente em qualquer posição.
+            </div>
+          </div>
+        )}
+
         {/* Modal */}
         {sel && (
           <div className="wms-modal-overlay" onClick={()=>setSel(null)}>
@@ -892,7 +1204,34 @@ export default function Wms() {
               <div className="wms-modal-body">
                 {selType === "rua" ? (
                   <>
-                    <div className="wms-field"><label>Loja</label><input value={form.loja} onChange={e=>setForm(f=>({...f,loja:e.target.value}))} placeholder="Nome da loja"/></div>
+                    <div className="wms-form-row">
+                      <div className="wms-field"><label>Loja</label>
+                        <select value={lojas.includes(form.loja)||!form.loja?form.loja:'__custom__'} onChange={e=>{
+                          const v = e.target.value;
+                          if (v === '__add__') { const n = prompt('Nome da nova loja:'); if (n && n.trim()) { saveLojas([...lojas, n.trim()].sort((a,b)=>a.localeCompare(b))); setForm(f=>({...f,loja:n.trim()})); } }
+                          else if (v === '__custom__') { /* mantém valor manual */ }
+                          else setForm(f=>({...f,loja:v}));
+                        }} style={{width:'100%'}}>
+                          <option value="">— Selecione —</option>
+                          {lojas.map(l => <option key={l} value={l}>{l}</option>)}
+                          {form.loja && !lojas.includes(form.loja) && <option value="__custom__">{form.loja} (manual)</option>}
+                          <option value="__add__">+ Nova loja…</option>
+                        </select>
+                      </div>
+                      <div className="wms-field"><label>Fornecedor (posição)</label>
+                        <select value={fornecedores.includes(form.fornecedor)||!form.fornecedor?form.fornecedor:'__custom__'} onChange={e=>{
+                          const v = e.target.value;
+                          if (v === '__add__') { const n = prompt('Nome do novo fornecedor:'); if (n && n.trim()) { saveFornecedores([...fornecedores, n.trim()].sort((a,b)=>a.localeCompare(b))); setForm(f=>({...f,fornecedor:n.trim()})); } }
+                          else if (v === '__custom__') { /* mantém */ }
+                          else setForm(f=>({...f,fornecedor:v}));
+                        }} style={{width:'100%'}}>
+                          <option value="">— Selecione —</option>
+                          {fornecedores.map(fn => <option key={fn} value={fn}>{fn}</option>)}
+                          {form.fornecedor && !fornecedores.includes(form.fornecedor) && <option value="__custom__">{form.fornecedor} (manual)</option>}
+                          <option value="__add__">+ Novo fornecedor…</option>
+                        </select>
+                      </div>
+                    </div>
                     <div style={{fontSize:11,fontWeight:700,color:'#00C896',textTransform:'uppercase',letterSpacing:1,marginBottom:8,marginTop:4}}>Produtos nesta posição ({form.produtos?.length || 0})</div>
                     {(form.produtos||[]).map((prod, pi) => (
                       <div key={pi} style={{background:'#161820',borderRadius:8,padding:'12px',marginBottom:8,border:'1px solid #1E2028',position:'relative'}}>
@@ -907,6 +1246,20 @@ export default function Wms() {
                           <div className="wms-field"><label>Qtd</label><input type="number" value={prod.qtd} onChange={e=>{const p=[...form.produtos];p[pi]={...p[pi],qtd:e.target.value};setForm(f=>({...f,produtos:p}));}} placeholder="0"/></div>
                           {canSeeValues && <div className="wms-field"><label>Val.Unit (R$)</label><input type="number" value={prod.valorUnit} onChange={e=>{const p=[...form.produtos];p[pi]={...p[pi],valorUnit:e.target.value};setForm(f=>({...f,produtos:p}));}} placeholder="0.00" step="0.01"/></div>}
                         </div>
+                        <div className="wms-field"><label>Fornecedor (opcional — sobrescreve o da posição)</label>
+                          <select value={fornecedores.includes(prod.fornecedor)||!prod.fornecedor?(prod.fornecedor||''):'__custom__'} onChange={e=>{
+                            const v = e.target.value;
+                            const p = [...form.produtos];
+                            if (v === '__add__') { const n = prompt('Nome do novo fornecedor:'); if (n && n.trim()) { saveFornecedores([...fornecedores, n.trim()].sort((a,b)=>a.localeCompare(b))); p[pi]={...p[pi],fornecedor:n.trim()}; setForm(f=>({...f,produtos:p})); } }
+                            else if (v === '__custom__') { /* mantém */ }
+                            else { p[pi]={...p[pi],fornecedor:v}; setForm(f=>({...f,produtos:p})); }
+                          }} style={{width:'100%'}}>
+                            <option value="">{form.fornecedor ? `↑ Herda da posição (${form.fornecedor})` : '— sem fornecedor —'}</option>
+                            {fornecedores.map(fn => <option key={fn} value={fn}>{fn}</option>)}
+                            {prod.fornecedor && !fornecedores.includes(prod.fornecedor) && <option value="__custom__">{prod.fornecedor} (manual)</option>}
+                            <option value="__add__">+ Novo fornecedor…</option>
+                          </select>
+                        </div>
                       </div>
                     ))}
                     <button onClick={()=>setForm(f=>({...f,produtos:[...(f.produtos||[]),{...EMPTY_PROD}]}))} style={{width:'100%',padding:'8px',background:'#1e3a5f',border:'1px dashed #3b82f6',borderRadius:8,color:'#93c5fd',fontWeight:600,cursor:'pointer',fontFamily:'inherit',fontSize:12,marginBottom:12}}>+ Adicionar Produto</button>
@@ -917,7 +1270,32 @@ export default function Wms() {
                 ) : (
                   <>
                     <div className="wms-field"><label>Descrição</label><input value={areaForm.descricao} onChange={e=>setAreaForm(f=>({...f,descricao:e.target.value}))} placeholder="Produto/carga"/></div>
-                    <div className="wms-field"><label>Loja</label><input value={areaForm.loja} onChange={e=>setAreaForm(f=>({...f,loja:e.target.value}))} placeholder="Nome da loja"/></div>
+                    <div className="wms-form-row">
+                      <div className="wms-field"><label>Loja</label>
+                        <select value={lojas.includes(areaForm.loja)||!areaForm.loja?areaForm.loja:'__custom__'} onChange={e=>{
+                          const v = e.target.value;
+                          if (v === '__add__') { const n = prompt('Nome da nova loja:'); if (n && n.trim()) { saveLojas([...lojas, n.trim()].sort((a,b)=>a.localeCompare(b))); setAreaForm(f=>({...f,loja:n.trim()})); } }
+                          else if (v === '__custom__') {} else setAreaForm(f=>({...f,loja:v}));
+                        }} style={{width:'100%'}}>
+                          <option value="">— Selecione —</option>
+                          {lojas.map(l => <option key={l} value={l}>{l}</option>)}
+                          {areaForm.loja && !lojas.includes(areaForm.loja) && <option value="__custom__">{areaForm.loja} (manual)</option>}
+                          <option value="__add__">+ Nova loja…</option>
+                        </select>
+                      </div>
+                      <div className="wms-field"><label>Fornecedor</label>
+                        <select value={fornecedores.includes(areaForm.fornecedor)||!areaForm.fornecedor?(areaForm.fornecedor||''):'__custom__'} onChange={e=>{
+                          const v = e.target.value;
+                          if (v === '__add__') { const n = prompt('Nome do novo fornecedor:'); if (n && n.trim()) { saveFornecedores([...fornecedores, n.trim()].sort((a,b)=>a.localeCompare(b))); setAreaForm(f=>({...f,fornecedor:n.trim()})); } }
+                          else if (v === '__custom__') {} else setAreaForm(f=>({...f,fornecedor:v}));
+                        }} style={{width:'100%'}}>
+                          <option value="">— Selecione —</option>
+                          {fornecedores.map(fn => <option key={fn} value={fn}>{fn}</option>)}
+                          {areaForm.fornecedor && !fornecedores.includes(areaForm.fornecedor) && <option value="__custom__">{areaForm.fornecedor} (manual)</option>}
+                          <option value="__add__">+ Novo fornecedor…</option>
+                        </select>
+                      </div>
+                    </div>
                     <div className="wms-form-row">
                       <div className="wms-field"><label>Quantidade</label><input type="number" value={areaForm.qtd} onChange={e=>setAreaForm(f=>({...f,qtd:e.target.value}))} placeholder="0"/></div>
                       {canSeeValues && <div className="wms-field"><label>Valor Unit.</label><input type="number" value={areaForm.valorUnit} onChange={e=>setAreaForm(f=>({...f,valorUnit:e.target.value}))} placeholder="0.00"/></div>}
