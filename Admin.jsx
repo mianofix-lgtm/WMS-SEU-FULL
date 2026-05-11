@@ -21,12 +21,45 @@ export default function Admin() {
   const [logs, setLogs] = useState([]);
   const [showLogs, setShowLogs] = useState(false);
   const [lastBackup, setLastBackup] = useState(null);
+  const [autoBackups, setAutoBackups] = useState([]);
+  const [selectedAutoBackup, setSelectedAutoBackup] = useState('');
+  const [restoringAuto, setRestoringAuto] = useState(false);
 
-  useEffect(() => { loadUsers(); loadPrices(); loadLastBackup(); }, []);
+  useEffect(() => { loadUsers(); loadPrices(); loadLastBackup(); loadAutoBackups(); }, []);
 
   async function loadLogs() { const l = await getLogs(200); setLogs(l); }
 
   async function loadLastBackup() { try { const d = await getDoc(doc(db,'config','lastBackup')); if (d.exists()) setLastBackup(d.data().date); } catch(e){} }
+
+  async function loadAutoBackups() {
+    try {
+      const snap = await getDocs(collection(db, 'backups'));
+      const list = [];
+      snap.forEach(d => list.push(d.id));
+      list.sort((a,b) => b.localeCompare(a)); // newest first
+      setAutoBackups(list);
+    } catch(e) { console.error('loadAutoBackups error:', e); }
+  }
+
+  async function restoreFromAutoBackup() {
+    if (!selectedAutoBackup) { showToast('Selecione uma data primeiro'); return; }
+    if (!confirm(`ATENÇÃO: Isso vai SUBSTITUIR o estoque WMS atual com o backup de ${selectedAutoBackup}. Continuar?`)) return;
+    if (!confirm('Última confirmação. SUBSTITUIR o estoque atual?')) return;
+    setRestoringAuto(true);
+    try {
+      const backupDoc = await getDoc(doc(db, 'backups', selectedAutoBackup));
+      if (!backupDoc.exists()) { showToast('Backup não encontrado'); setRestoringAuto(false); return; }
+      const backupData = backupDoc.data();
+      if (!backupData.wms) { showToast('Backup sem dados WMS'); setRestoringAuto(false); return; }
+      const wmsCells = JSON.parse(backupData.wms);
+      const cellCount = Object.keys(wmsCells).length;
+      const { saveWmsData } = await import('./firebase.js');
+      await saveWmsData(wmsCells);
+      showToast(`✓ Estoque restaurado! ${cellCount} posições do backup ${selectedAutoBackup}. Recarregue a página (F5).`);
+      logAction(user, 'RESTORE_AUTO', 'Backup automático restaurado de ' + selectedAutoBackup).catch(()=>{});
+    } catch(e) { showToast('Erro: ' + e.message); console.error(e); }
+    setRestoringAuto(false);
+  }
 
   async function doBackup() {
     setBackingUp(true);
@@ -297,6 +330,21 @@ export default function Admin() {
           
           <div style={{marginTop:16,padding:12,background:'#dc262610',border:'1px solid #dc262630',borderRadius:8}}>
             <p style={{fontSize:12,color:'#fca5a5',fontWeight:600}}>⚠ Restaurar um backup SUBSTITUI todos os dados atuais. Use apenas em caso de emergência.</p>
+          </div>
+
+          <div style={{marginTop:20,paddingTop:20,borderTop:'1px solid #1E2028'}}>
+            <h3 style={{fontSize:15,fontWeight:800,marginBottom:8,color:'#fbbf24'}}>♻ Restaurar Estoque de Backup Automático</h3>
+            <p style={{color:'#8B8D97',fontSize:12,marginBottom:12}}>Escolha uma data dos backups diários salvos no Firebase. Vai SUBSTITUIR o estoque WMS atual pelo do backup selecionado.</p>
+            <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
+              <select value={selectedAutoBackup} onChange={e=>setSelectedAutoBackup(e.target.value)} style={{padding:'10px 14px',background:'#161820',color:'#fff',border:'1px solid #1E2028',borderRadius:8,fontSize:14,fontFamily:'inherit',minWidth:200}}>
+                <option value="">Selecione uma data...</option>
+                {autoBackups.map(date => <option key={date} value={date}>{date}</option>)}
+              </select>
+              <button onClick={restoreFromAutoBackup} disabled={!selectedAutoBackup || restoringAuto} style={{padding:'10px 24px',background:'#fbbf24',color:'#1c1917',border:'none',borderRadius:8,fontWeight:700,cursor:(!selectedAutoBackup||restoringAuto)?'not-allowed':'pointer',fontFamily:'inherit',fontSize:14,opacity:(!selectedAutoBackup || restoringAuto)?0.5:1}}>
+                {restoringAuto ? '⏳ Restaurando...' : '♻ Restaurar Estoque'}
+              </button>
+            </div>
+            <p style={{fontSize:11,color:'#8B8D97',marginTop:8}}>{autoBackups.length} backups disponíveis</p>
           </div>
         </div>
       </div>
