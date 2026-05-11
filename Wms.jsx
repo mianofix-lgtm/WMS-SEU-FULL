@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect, useCallback } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { useAuth } from "./App.jsx";
-import { getPerms, logout, getWmsData, saveWmsData, db, logAction } from "./firebase.js";
+import { getPerms, logout, getWmsData, saveWmsData, wmsSaveCell, wmsClearCell, wmsMoveCell, wmsArchiveCells, db, logAction } from "./firebase.js";
 import { LOGO_ICON } from "./logo.js";
 import { doc, getDoc, setDoc } from "firebase/firestore";
 
@@ -233,7 +233,7 @@ export default function Wms() {
     const newHistory = [archived, ...coletaHistory].slice(0, 50);
     setColetaHistory(newHistory);
     try {
-      await saveWmsData(next);
+      await wmsArchiveCells(items);
       await setDoc(doc(db, 'wms', 'coletas'), { history: JSON.stringify(newHistory), updatedAt: new Date().toISOString() });
       showToast(`${items.length} posições coletadas!`);
       logAction(user, 'COLETA', `${items.length} posições coletadas do Full Pronto`).catch(()=>{});
@@ -310,7 +310,7 @@ export default function Wms() {
     const next = {...cells, [sel]: data};
     setCells(next);
     try {
-      await saveWmsData(next);
+      await wmsSaveCell(sel, data);
       showToast("Salvo na nuvem ☁️");
       logAction(user, 'WMS_SAVE', `Posição ${sel} atualizada`).catch(()=>{});
     } catch(e) {
@@ -328,7 +328,7 @@ export default function Wms() {
     delete next[sel];
     setCells(next);
     try {
-      await saveWmsData(next);
+      await wmsClearCell(sel);
       showToast("Posição limpa");
       logAction(user, 'WMS_CLEAR', `Posição ${sel} limpa`).catch(()=>{});
     } catch(e) {
@@ -393,7 +393,7 @@ export default function Wms() {
     
     setCells(next);
     try {
-      await saveWmsData(next);
+      await wmsMoveCell(sel, targetSlot, destData);
       showToast(`Movido: ${sel} → ${targetSlot}`);
       logAction(user, 'WMS_MOVE', `${sel} → ${targetSlot} (${source.loja || '-'})`).catch(()=>{});
     } catch(e) {
