@@ -17,7 +17,7 @@ const WAREHOUSE = {
   ],
 };
 const LADOS = ["A","B"];
-const EMPTY_PROD = { sku:"", nome:"", qtd:"", valorUnit:"", curva:"", fornecedor:"" };
+const EMPTY_PROD = { sku:"", nome:"", qtd:"", valorUnit:"", curva:"", fornecedor:"", comprimento:"", largura:"", altura:"", pesoCaixa:"", unidadesPorCaixa:"", qtdCaixas:"", qtdManual:false };
 const EMPTY = { loja:"", obs:"", fornecedor:"", produtos:[{...EMPTY_PROD}] };
 const EMPTY_AREA = { descricao:"", loja:"", qtd:"", valorUnit:"", obs:"", paletes:"", dataEntrada:"", fornecedor:"" };
 const fullSlots = Array.from({length:40},(_,i)=>`FULL-${i+1}`);
@@ -1436,9 +1436,44 @@ export default function Wms() {
                         </div>
                         <div className="wms-field"><label>Nome</label><input value={prod.nome} onChange={e=>{const p=[...form.produtos];p[pi]={...p[pi],nome:e.target.value};setForm(f=>({...f,produtos:p}));}} placeholder="Descrição do produto"/></div>
                         <div className="wms-form-row">
-                          <div className="wms-field"><label>Qtd</label><input type="number" value={prod.qtd} onChange={e=>{const p=[...form.produtos];p[pi]={...p[pi],qtd:e.target.value};setForm(f=>({...f,produtos:p}));}} placeholder="0"/></div>
+                          <div className="wms-field">
+                            <label>Qtd {prod.qtdManual && prod.qtdCaixas && prod.unidadesPorCaixa && <span title={`Valor manual — difere de ${prod.qtdCaixas}cx × ${prod.unidadesPorCaixa}und/cx = ${parseInt(prod.qtdCaixas||0)*parseInt(prod.unidadesPorCaixa||0)}`} style={{color:'#fbbf24',cursor:'help',marginLeft:4}}>⚠</span>}</label>
+                            <input type="number" value={prod.qtd} onChange={e=>{
+                              const p=[...form.produtos];
+                              const calc = (parseInt(p[pi].qtdCaixas||0)||0) * (parseInt(p[pi].unidadesPorCaixa||0)||0);
+                              const manual = calc > 0 && parseInt(e.target.value||0) !== calc;
+                              p[pi]={...p[pi],qtd:e.target.value,qtdManual:manual};
+                              setForm(f=>({...f,produtos:p}));
+                            }} placeholder="0"/>
+                          </div>
                           {canSeeValues && <div className="wms-field"><label>Val.Unit (R$)</label><input type="number" value={prod.valorUnit} onChange={e=>{const p=[...form.produtos];p[pi]={...p[pi],valorUnit:e.target.value};setForm(f=>({...f,produtos:p}));}} placeholder="0.00" step="0.01"/></div>}
                         </div>
+                        <div className="wms-form-row">
+                          <div className="wms-field"><label>Qtd Caixas</label><input type="number" value={prod.qtdCaixas||''} onChange={e=>{
+                            const p=[...form.produtos];
+                            const cxs = parseInt(e.target.value||0)||0;
+                            const upCx = parseInt(p[pi].unidadesPorCaixa||0)||0;
+                            p[pi]={...p[pi],qtdCaixas:e.target.value};
+                            if(cxs>0&&upCx>0){p[pi].qtd=String(cxs*upCx);p[pi].qtdManual=false;}
+                            setForm(f=>({...f,produtos:p}));
+                          }} placeholder="0" min="0"/></div>
+                          <div className="wms-field"><label>Und/Caixa</label><input type="number" value={prod.unidadesPorCaixa||''} onChange={e=>{
+                            const p=[...form.produtos];
+                            const upCx = parseInt(e.target.value||0)||0;
+                            const cxs = parseInt(p[pi].qtdCaixas||0)||0;
+                            p[pi]={...p[pi],unidadesPorCaixa:e.target.value};
+                            if(cxs>0&&upCx>0){p[pi].qtd=String(cxs*upCx);p[pi].qtdManual=false;}
+                            setForm(f=>({...f,produtos:p}));
+                          }} placeholder="0" min="0"/></div>
+                        </div>
+                        <div className="wms-form-row" style={{alignItems:'center',gap:4}}>
+                          <div className="wms-field" style={{flex:1}}><label>Comprimento (cm)</label><input type="number" value={prod.comprimento||''} onChange={e=>{const p=[...form.produtos];p[pi]={...p[pi],comprimento:e.target.value};setForm(f=>({...f,produtos:p}));}} placeholder="C" min="0" step="0.1"/></div>
+                          <div style={{paddingTop:18,color:'#8B8D97',fontSize:14}}>×</div>
+                          <div className="wms-field" style={{flex:1}}><label>Largura (cm)</label><input type="number" value={prod.largura||''} onChange={e=>{const p=[...form.produtos];p[pi]={...p[pi],largura:e.target.value};setForm(f=>({...f,produtos:p}));}} placeholder="L" min="0" step="0.1"/></div>
+                          <div style={{paddingTop:18,color:'#8B8D97',fontSize:14}}>×</div>
+                          <div className="wms-field" style={{flex:1}}><label>Altura (cm)</label><input type="number" value={prod.altura||''} onChange={e=>{const p=[...form.produtos];p[pi]={...p[pi],altura:e.target.value};setForm(f=>({...f,produtos:p}));}} placeholder="A" min="0" step="0.1"/></div>
+                        </div>
+                        <div className="wms-field"><label>Peso Caixa (kg)</label><input type="number" value={prod.pesoCaixa||''} onChange={e=>{const p=[...form.produtos];p[pi]={...p[pi],pesoCaixa:e.target.value};setForm(f=>({...f,produtos:p}));}} placeholder="0.000" step="0.001" min="0"/></div>
                         <div className="wms-field"><label>Fornecedor (opcional — sobrescreve o da posição)</label>
                           <select value={fornecedores.includes(prod.fornecedor)||!prod.fornecedor?(prod.fornecedor||''):'__custom__'} onChange={e=>{
                             const v = e.target.value;
