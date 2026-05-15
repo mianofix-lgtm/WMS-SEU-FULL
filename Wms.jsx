@@ -65,16 +65,18 @@ export default function Wms() {
   const [search, setSearch] = useState("");
   const [coletaHistory, setColetaHistory] = useState([]);
   const [insumosData, setInsumosData] = useState([]);
-  const [newInsumo, setNewInsumo] = useState({nome:'',unidade:'un',precoUnit:'',qtdRetirada:'',colaborador:'',obs:''});
+  const [newInsumo, setNewInsumo] = useState({nome:'',unidade:'un',precoUnit:'',qtdRetirada:'',colaborador:'',obs:'',fornecedor:'',sku:''});
+  const [editInsumoModal, setEditInsumoModal] = useState(null);
   const [selectedColeta, setSelectedColeta] = useState(new Set());
   const [coletaForm, setColetaForm] = useState({colaborador:'',data:'',hora:''});
   const [fullTab, setFullTab] = useState('atual');
   const [showMoveMenu, setShowMoveMenu] = useState(false);
   const [moveTarget, setMoveTarget] = useState('');
 
-  // Configurações: lojas e fornecedores (gerenciáveis pela aba Configurações)
+  // Configurações: lojas, fornecedores e tipos de material (gerenciáveis)
   const [lojas, setLojas] = useState(LOJAS_DEFAULT);
   const [fornecedores, setFornecedores] = useState(FORN_DEFAULT);
+  const [materialTipos, setMaterialTipos] = useState([]);
   const [novaLoja, setNovaLoja] = useState('');
   const [novoForn, setNovoForn] = useState('');
 
@@ -105,9 +107,10 @@ export default function Wms() {
         const data = d.data();
         if (Array.isArray(data.lojas) && data.lojas.length > 0) setLojas(data.lojas);
         if (Array.isArray(data.fornecedores) && data.fornecedores.length > 0) setFornecedores(data.fornecedores);
+        if (Array.isArray(data.materialTipos)) setMaterialTipos(data.materialTipos);
       } else {
         // Primeira vez: salva defaults no Firestore
-        await setDoc(doc(db, 'wms', 'config'), { lojas: LOJAS_DEFAULT, fornecedores: FORN_DEFAULT, updatedAt: new Date().toISOString() });
+        await setDoc(doc(db, 'wms', 'config'), { lojas: LOJAS_DEFAULT, fornecedores: FORN_DEFAULT, materialTipos: [], updatedAt: new Date().toISOString() });
       }
     } catch(e) { console.error('loadConfig error:', e); }
   }
@@ -126,6 +129,13 @@ export default function Wms() {
       await setDoc(doc(db, 'wms', 'config'), { lojas, fornecedores: arr, updatedAt: new Date().toISOString() }, { merge: true });
       logAction(user, 'CONFIG', `Fornecedores atualizados (${arr.length})`).catch(()=>{});
     } catch(e) { showToast('Erro ao salvar fornecedores', 'warn'); }
+  }
+
+  async function saveMaterialTipos(arr) {
+    setMaterialTipos(arr);
+    try {
+      await setDoc(doc(db, 'wms', 'config'), { materialTipos: arr, updatedAt: new Date().toISOString() }, { merge: true });
+    } catch(e) { showToast('Erro ao salvar tipos de material', 'warn'); }
   }
 
   function addLoja() {
@@ -179,22 +189,49 @@ export default function Wms() {
 
   function addInsumo() {
     if (!newInsumo.nome || !newInsumo.qtdRetirada) { showToast('Preencha nome e quantidade','warn'); return; }
+    let nomeReal = newInsumo.nome;
+    if (newInsumo.nome === 'Outro') {
+      if (!newInsumo.obs.trim()) { showToast('Digite o nome do material no campo "Qual?"','warn'); return; }
+      nomeReal = newInsumo.obs.trim();
+      if (!materialTipos.some(t => t.toLowerCase() === nomeReal.toLowerCase())) {
+        saveMaterialTipos([...materialTipos, nomeReal].sort((a,b)=>a.localeCompare(b)));
+      }
+    }
     const item = {
       id: Date.now().toString(36),
-      nome: newInsumo.nome,
+      nome: nomeReal,
       unidade: newInsumo.unidade,
       precoUnit: parseFloat(newInsumo.precoUnit)||0,
       usado: parseFloat(newInsumo.qtdRetirada)||0,
       colaborador: newInsumo.colaborador || user?.nome || user?.email || '',
       data: new Date().toISOString(),
-      obs: newInsumo.obs,
+      obs: newInsumo.nome === 'Outro' ? '' : newInsumo.obs,
+      fornecedor: newInsumo.fornecedor || '',
+      sku: newInsumo.sku || '',
     };
     const next = [item, ...insumosData];
     setInsumosData(next);
     saveInsumos(next);
-    setNewInsumo({nome:'',unidade:newInsumo.unidade,precoUnit:newInsumo.precoUnit,qtdRetirada:'',colaborador:'',obs:''});
+    setNewInsumo({nome:'',unidade:newInsumo.unidade,precoUnit:newInsumo.precoUnit,qtdRetirada:'',colaborador:'',obs:'',fornecedor:newInsumo.fornecedor,sku:''});
     showToast('Insumo registrado!');
-    logAction(user, 'INSUMO', `${newInsumo.nome} x${newInsumo.qtdRetirada} por ${newInsumo.colaborador||user?.nome}`).catch(()=>{});
+    logAction(user, 'INSUMO', `${nomeReal} x${newInsumo.qtdRetirada} por ${newInsumo.colaborador||user?.nome}`).catch(()=>{});
+  }
+
+  function saveEditInsumo(edited) {
+    let nomeReal = edited.nome;
+    if (edited.nome === 'Outro') {
+      if (!edited.obs.trim()) { showToast('Digite o nome do material no campo "Qual?"','warn'); return; }
+      nomeReal = edited.obs.trim();
+      if (!materialTipos.some(t => t.toLowerCase() === nomeReal.toLowerCase())) {
+        saveMaterialTipos([...materialTipos, nomeReal].sort((a,b)=>a.localeCompare(b)));
+      }
+    }
+    const updated = { ...edited, nome: nomeReal, obs: edited.nome === 'Outro' ? '' : edited.obs };
+    const next = insumosData.map(i => i.id === updated.id ? updated : i);
+    setInsumosData(next);
+    saveInsumos(next);
+    setEditInsumoModal(null);
+    showToast('Insumo atualizado!');
   }
 
   function removeInsumo(id) {
@@ -1030,10 +1067,18 @@ export default function Wms() {
                     <option value="Caixa Papelão">Caixa Papelão</option>
                     <option value="Saco Plástico">Saco Plástico</option>
                     <option value="Ribbon Impressora">Ribbon Impressora</option>
-                    <option value="Outro">Outro</option>
+                    {materialTipos.map(t => <option key={t} value={t}>{t}</option>)}
+                    <option value="Outro">Outro (novo tipo...)</option>
                   </select>
                 </div>
-                {newInsumo.nome === 'Outro' && <div><label style={{fontSize:10,color:'#8B8D97',display:'block',marginBottom:2}}>QUAL?</label><input value={newInsumo.obs} onChange={e=>setNewInsumo(f=>({...f,obs:e.target.value}))} style={{padding:'8px 10px',background:'#161820',border:'1px solid #1E2028',borderRadius:6,color:'#fff',fontSize:13,fontFamily:'inherit',outline:'none',width:140}} placeholder="Descreva" /></div>}
+                {newInsumo.nome === 'Outro' && <div><label style={{fontSize:10,color:'#8B8D97',display:'block',marginBottom:2}}>QUAL? (será salvo para próximas vezes)</label><input value={newInsumo.obs} onChange={e=>setNewInsumo(f=>({...f,obs:e.target.value}))} style={{padding:'8px 10px',background:'#161820',border:'1px solid #7c3aed',borderRadius:6,color:'#fff',fontSize:13,fontFamily:'inherit',outline:'none',width:180}} placeholder="Nome do novo material" /></div>}
+                <div><label style={{fontSize:10,color:'#8B8D97',display:'block',marginBottom:2}}>FORNECEDOR</label>
+                  <select value={newInsumo.fornecedor} onChange={e=>setNewInsumo(f=>({...f,fornecedor:e.target.value}))} style={{padding:'8px 10px',background:'#161820',border:'1px solid #1E2028',borderRadius:6,color:'#fff',fontSize:13,fontFamily:'inherit',outline:'none',minWidth:150}}>
+                    <option value="">— Nenhum —</option>
+                    {fornecedores.map(fn => <option key={fn} value={fn}>{fn}</option>)}
+                  </select>
+                </div>
+                <div><label style={{fontSize:10,color:'#8B8D97',display:'block',marginBottom:2}}>SKU</label><input value={newInsumo.sku} onChange={e=>setNewInsumo(f=>({...f,sku:e.target.value}))} style={{padding:'8px 10px',background:'#161820',border:'1px solid #1E2028',borderRadius:6,color:'#fff',fontSize:13,fontFamily:'inherit',outline:'none',width:100}} placeholder="EX-001" /></div>
                 <div><label style={{fontSize:10,color:'#8B8D97',display:'block',marginBottom:2}}>UNIDADE</label>
                   <select value={newInsumo.unidade} onChange={e=>setNewInsumo(f=>({...f,unidade:e.target.value}))} style={{padding:'8px 10px',background:'#161820',border:'1px solid #1E2028',borderRadius:6,color:'#fff',fontSize:13,fontFamily:'inherit',outline:'none'}}>
                     <option value="un">Unidade</option><option value="rolo">Rolo</option><option value="cx">Caixa</option><option value="m">Metro</option><option value="kg">Kg</option>
@@ -1052,39 +1097,49 @@ export default function Wms() {
                 <thead><tr>
                   <th style={{textAlign:'left',padding:'10px 12px',borderBottom:'1px solid #1E2028',fontSize:11,fontWeight:700,color:'#8B8D97',textTransform:'uppercase'}}>Data/Hora</th>
                   <th style={{textAlign:'left',padding:'10px 12px',borderBottom:'1px solid #1E2028',fontSize:11,fontWeight:700,color:'#8B8D97',textTransform:'uppercase'}}>Colaborador</th>
+                  <th style={{textAlign:'left',padding:'10px 12px',borderBottom:'1px solid #1E2028',fontSize:11,fontWeight:700,color:'#8B8D97',textTransform:'uppercase'}}>Fornecedor</th>
                   <th style={{textAlign:'left',padding:'10px 12px',borderBottom:'1px solid #1E2028',fontSize:11,fontWeight:700,color:'#8B8D97',textTransform:'uppercase'}}>Material</th>
+                  <th style={{textAlign:'left',padding:'10px 12px',borderBottom:'1px solid #1E2028',fontSize:11,fontWeight:700,color:'#8B8D97',textTransform:'uppercase'}}>SKU</th>
                   <th style={{textAlign:'left',padding:'10px 12px',borderBottom:'1px solid #1E2028',fontSize:11,fontWeight:700,color:'#8B8D97',textTransform:'uppercase'}}>Unid</th>
                   <th style={{textAlign:'right',padding:'10px 12px',borderBottom:'1px solid #1E2028',fontSize:11,fontWeight:700,color:'#8B8D97',textTransform:'uppercase'}}>Qtd</th>
                   <th style={{textAlign:'right',padding:'10px 12px',borderBottom:'1px solid #1E2028',fontSize:11,fontWeight:700,color:'#8B8D97',textTransform:'uppercase'}}>R$/un</th>
                   <th style={{textAlign:'right',padding:'10px 12px',borderBottom:'1px solid #1E2028',fontSize:11,fontWeight:700,color:'#8B8D97',textTransform:'uppercase'}}>Total</th>
-                  {canDelete && <th style={{padding:'10px 12px',borderBottom:'1px solid #1E2028'}}></th>}
+                  <th style={{padding:'10px 12px',borderBottom:'1px solid #1E2028'}}></th>
                 </tr></thead>
                 <tbody>
                   {insumosData.length === 0 ? (
-                    <tr><td colSpan={8} style={{textAlign:'center',color:'#8B8D97',padding:32}}>Nenhum insumo registrado este mês.</td></tr>
+                    <tr><td colSpan={10} style={{textAlign:'center',color:'#8B8D97',padding:32}}>Nenhum insumo registrado este mês.</td></tr>
                   ) : insumosData.map(item => {
                     const total = (parseFloat(item.precoUnit)||0) * (parseFloat(item.usado)||0);
                     const dt = new Date(item.data);
+                    const nomeDisplay = item.nome === 'Outro' ? (item.obs||'Outro') : item.nome;
                     return (
                       <tr key={item.id}>
-                        <td style={{padding:'8px 12px',borderBottom:'1px solid #1E202880',fontSize:12,color:'#8B8D97'}}>{dt.toLocaleDateString('pt-BR')} {dt.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}</td>
+                        <td style={{padding:'8px 12px',borderBottom:'1px solid #1E202880',fontSize:12,color:'#8B8D97',whiteSpace:'nowrap'}}>{dt.toLocaleDateString('pt-BR')} {dt.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}</td>
                         <td style={{padding:'8px 12px',borderBottom:'1px solid #1E202880',fontWeight:600,color:'#93c5fd'}}>{item.colaborador||'-'}</td>
-                        <td style={{padding:'8px 12px',borderBottom:'1px solid #1E202880',fontWeight:600}}>{item.nome === 'Outro' ? (item.obs||'Outro') : item.nome}</td>
+                        <td style={{padding:'8px 12px',borderBottom:'1px solid #1E202880',fontSize:12,color:item.fornecedor?'#fdba74':'#8B8D97'}}>{item.fornecedor||'-'}</td>
+                        <td style={{padding:'8px 12px',borderBottom:'1px solid #1E202880',fontWeight:600}}>{nomeDisplay}</td>
+                        <td style={{padding:'8px 12px',borderBottom:'1px solid #1E202880',fontFamily:'monospace',fontSize:12,color:'#8B8D97'}}>{item.sku||'-'}</td>
                         <td style={{padding:'8px 12px',borderBottom:'1px solid #1E202880',color:'#8B8D97'}}>{item.unidade}</td>
                         <td style={{padding:'8px 12px',borderBottom:'1px solid #1E202880',textAlign:'right',fontWeight:700}}>{item.usado}</td>
                         <td style={{padding:'8px 12px',borderBottom:'1px solid #1E202880',textAlign:'right'}}>R$ {(parseFloat(item.precoUnit)||0).toFixed(2)}</td>
                         <td style={{padding:'8px 12px',borderBottom:'1px solid #1E202880',textAlign:'right',fontWeight:700,color:'#7c3aed'}}>R$ {total.toFixed(2)}</td>
-                        {canDelete && <td style={{padding:'8px 12px',borderBottom:'1px solid #1E202880'}}><button onClick={()=>removeInsumo(item.id)} style={{background:'#dc262610',border:'1px solid #dc262630',borderRadius:4,color:'#fca5a5',fontSize:11,cursor:'pointer',padding:'2px 6px',fontFamily:'inherit'}}>✕</button></td>}
+                        <td style={{padding:'8px 12px',borderBottom:'1px solid #1E202880'}}>
+                          <div style={{display:'flex',gap:4}}>
+                            {canEdit && <button onClick={()=>setEditInsumoModal({...item})} style={{background:'#3b82f615',border:'1px solid #3b82f640',borderRadius:4,color:'#93c5fd',fontSize:11,cursor:'pointer',padding:'2px 8px',fontFamily:'inherit'}}>Editar</button>}
+                            {canDelete && <button onClick={()=>removeInsumo(item.id)} style={{background:'#dc262610',border:'1px solid #dc262630',borderRadius:4,color:'#fca5a5',fontSize:11,cursor:'pointer',padding:'2px 6px',fontFamily:'inherit'}}>✕</button>}
+                          </div>
+                        </td>
                       </tr>
                     );
                   })}
                   {insumosData.length > 0 && (
                     <tr style={{background:'#7c3aed10'}}>
-                      <td colSpan={4} style={{padding:'10px 12px',fontWeight:800}}>TOTAL DO MÊS</td>
+                      <td colSpan={6} style={{padding:'10px 12px',fontWeight:800}}>TOTAL DO MÊS</td>
                       <td style={{padding:'10px 12px',textAlign:'right',fontWeight:800}}>{insumosData.reduce((s,i)=>s+(parseFloat(i.usado)||0),0)}</td>
                       <td style={{padding:'10px 12px'}}></td>
                       <td style={{padding:'10px 12px',textAlign:'right',fontWeight:900,color:'#7c3aed',fontSize:16}}>R$ {insumosData.reduce((s,i)=>s+(parseFloat(i.precoUnit)||0)*(parseFloat(i.usado)||0),0).toLocaleString('pt-BR',{minimumFractionDigits:2})}</td>
-                      {canDelete && <td></td>}
+                      <td></td>
                     </tr>
                   )}
                 </tbody>
@@ -1112,6 +1167,63 @@ export default function Wms() {
                 </div>
               </div>
             )}
+          </div>
+        )}
+
+        {/* ─── MODAL EDITAR INSUMO ─── */}
+        {editInsumoModal && (
+          <div style={{position:'fixed',inset:0,background:'#000c',zIndex:200,display:'flex',alignItems:'center',justifyContent:'center',padding:24}} onClick={()=>setEditInsumoModal(null)}>
+            <div style={{background:'#0F1117',border:'1px solid #1E2028',borderRadius:16,padding:28,maxWidth:520,width:'100%'}} onClick={e=>e.stopPropagation()}>
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:20}}>
+                <div style={{fontSize:16,fontWeight:800}}>Editar Insumo</div>
+                <button onClick={()=>setEditInsumoModal(null)} style={{background:'none',border:'none',color:'#8B8D97',fontSize:18,cursor:'pointer'}}>✕</button>
+              </div>
+              <div style={{display:'flex',flexDirection:'column',gap:12}}>
+                <div><label style={{fontSize:10,color:'#8B8D97',display:'block',marginBottom:4,textTransform:'uppercase',letterSpacing:1}}>Material</label>
+                  <select value={editInsumoModal.nome} onChange={e=>setEditInsumoModal(f=>({...f,nome:e.target.value}))} style={{width:'100%',padding:'10px 12px',background:'#161820',border:'1.5px solid #1E2028',borderRadius:8,color:'#fff',fontSize:13,fontFamily:'inherit',outline:'none'}}>
+                    <option value="">Selecione...</option>
+                    <option value="Rolo Etiqueta Zebra">Rolo Etiqueta Zebra</option>
+                    <option value="Rolo Etiqueta Térmica">Rolo Etiqueta Térmica</option>
+                    <option value="Fita Adesiva">Fita Adesiva</option>
+                    <option value="Fita Gomada">Fita Gomada</option>
+                    <option value="Stretch Film">Stretch Film</option>
+                    <option value="Plástico Bolha">Plástico Bolha</option>
+                    <option value="Envelope Segurança">Envelope Segurança</option>
+                    <option value="Caixa Papelão">Caixa Papelão</option>
+                    <option value="Saco Plástico">Saco Plástico</option>
+                    <option value="Ribbon Impressora">Ribbon Impressora</option>
+                    {materialTipos.map(t => <option key={t} value={t}>{t}</option>)}
+                    {editInsumoModal.nome && editInsumoModal.nome !== 'Outro' && !['Rolo Etiqueta Zebra','Rolo Etiqueta Térmica','Fita Adesiva','Fita Gomada','Stretch Film','Plástico Bolha','Envelope Segurança','Caixa Papelão','Saco Plástico','Ribbon Impressora'].includes(editInsumoModal.nome) && !materialTipos.includes(editInsumoModal.nome) && <option value={editInsumoModal.nome}>{editInsumoModal.nome}</option>}
+                    <option value="Outro">Outro (novo tipo...)</option>
+                  </select>
+                </div>
+                {editInsumoModal.nome === 'Outro' && <div><label style={{fontSize:10,color:'#8B8D97',display:'block',marginBottom:4,textTransform:'uppercase',letterSpacing:1}}>Qual? (será salvo para próximas vezes)</label><input value={editInsumoModal.obs||''} onChange={e=>setEditInsumoModal(f=>({...f,obs:e.target.value}))} style={{width:'100%',padding:'10px 12px',background:'#161820',border:'1.5px solid #7c3aed',borderRadius:8,color:'#fff',fontSize:13,fontFamily:'inherit',outline:'none',boxSizing:'border-box'}} placeholder="Nome do novo material" /></div>}
+                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
+                  <div><label style={{fontSize:10,color:'#8B8D97',display:'block',marginBottom:4,textTransform:'uppercase',letterSpacing:1}}>Fornecedor</label>
+                    <select value={editInsumoModal.fornecedor||''} onChange={e=>setEditInsumoModal(f=>({...f,fornecedor:e.target.value}))} style={{width:'100%',padding:'10px 12px',background:'#161820',border:'1.5px solid #1E2028',borderRadius:8,color:'#fff',fontSize:13,fontFamily:'inherit',outline:'none'}}>
+                      <option value="">— Nenhum —</option>
+                      {fornecedores.map(fn => <option key={fn} value={fn}>{fn}</option>)}
+                      {editInsumoModal.fornecedor && !fornecedores.includes(editInsumoModal.fornecedor) && <option value={editInsumoModal.fornecedor}>{editInsumoModal.fornecedor}</option>}
+                    </select>
+                  </div>
+                  <div><label style={{fontSize:10,color:'#8B8D97',display:'block',marginBottom:4,textTransform:'uppercase',letterSpacing:1}}>SKU</label><input value={editInsumoModal.sku||''} onChange={e=>setEditInsumoModal(f=>({...f,sku:e.target.value}))} style={{width:'100%',padding:'10px 12px',background:'#161820',border:'1.5px solid #1E2028',borderRadius:8,color:'#fff',fontSize:13,fontFamily:'inherit',outline:'none',boxSizing:'border-box'}} placeholder="EX-001" /></div>
+                </div>
+                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:12}}>
+                  <div><label style={{fontSize:10,color:'#8B8D97',display:'block',marginBottom:4,textTransform:'uppercase',letterSpacing:1}}>Unidade</label>
+                    <select value={editInsumoModal.unidade||'un'} onChange={e=>setEditInsumoModal(f=>({...f,unidade:e.target.value}))} style={{width:'100%',padding:'10px 12px',background:'#161820',border:'1.5px solid #1E2028',borderRadius:8,color:'#fff',fontSize:13,fontFamily:'inherit',outline:'none'}}>
+                      <option value="un">Unidade</option><option value="rolo">Rolo</option><option value="cx">Caixa</option><option value="m">Metro</option><option value="kg">Kg</option>
+                    </select>
+                  </div>
+                  <div><label style={{fontSize:10,color:'#8B8D97',display:'block',marginBottom:4,textTransform:'uppercase',letterSpacing:1}}>Preço Unit (R$)</label><input type="number" step="0.01" value={editInsumoModal.precoUnit||''} onChange={e=>setEditInsumoModal(f=>({...f,precoUnit:e.target.value}))} style={{width:'100%',padding:'10px 12px',background:'#161820',border:'1.5px solid #1E2028',borderRadius:8,color:'#fff',fontSize:13,fontFamily:'inherit',outline:'none',boxSizing:'border-box'}} placeholder="0.00" /></div>
+                  <div><label style={{fontSize:10,color:'#8B8D97',display:'block',marginBottom:4,textTransform:'uppercase',letterSpacing:1}}>Qtd Retirada</label><input type="number" value={editInsumoModal.usado||''} onChange={e=>setEditInsumoModal(f=>({...f,usado:e.target.value}))} style={{width:'100%',padding:'10px 12px',background:'#161820',border:'1.5px solid #1E2028',borderRadius:8,color:'#fff',fontSize:13,fontFamily:'inherit',outline:'none',boxSizing:'border-box'}} placeholder="0" /></div>
+                </div>
+                <div><label style={{fontSize:10,color:'#8B8D97',display:'block',marginBottom:4,textTransform:'uppercase',letterSpacing:1}}>Colaborador</label><input value={editInsumoModal.colaborador||''} onChange={e=>setEditInsumoModal(f=>({...f,colaborador:e.target.value}))} style={{width:'100%',padding:'10px 12px',background:'#161820',border:'1.5px solid #1E2028',borderRadius:8,color:'#fff',fontSize:13,fontFamily:'inherit',outline:'none',boxSizing:'border-box'}} /></div>
+              </div>
+              <div style={{display:'flex',gap:10,justifyContent:'flex-end',marginTop:20}}>
+                <button onClick={()=>setEditInsumoModal(null)} style={{padding:'10px 20px',background:'transparent',color:'#8B8D97',border:'1px solid #1E2028',borderRadius:8,cursor:'pointer',fontFamily:'inherit'}}>Cancelar</button>
+                <button onClick={()=>saveEditInsumo(editInsumoModal)} style={{padding:'10px 24px',background:'#7c3aed',color:'#fff',border:'none',borderRadius:8,fontWeight:700,cursor:'pointer',fontFamily:'inherit'}}>Salvar →</button>
+              </div>
+            </div>
           </div>
         )}
 
