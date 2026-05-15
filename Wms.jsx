@@ -3,6 +3,7 @@ import { useNavigate, Link } from "react-router-dom";
 import { useAuth } from "./App.jsx";
 import { getPerms, logout, getWmsData, saveWmsData, wmsSaveCell, wmsClearCell, wmsMoveCell, wmsArchiveCells, db, logAction } from "./firebase.js";
 import { LOGO_ICON } from "./logo.js";
+import * as XLSX from 'xlsx';
 import { doc, getDoc, setDoc } from "firebase/firestore";
 
 const CURVA_COLORS = { A: "#dc2626", B: "#d97706", C: "#16a34a", "": "#94a3b8" };
@@ -238,6 +239,86 @@ export default function Wms() {
     const next = insumosData.filter(i => i.id !== id);
     setInsumosData(next);
     saveInsumos(next);
+  }
+
+  function exportExcel() {
+    const today = new Date().toISOString().substring(0, 10);
+    const wb = XLSX.utils.book_new();
+
+    // Build flat rows (same logic as Inventário tab)
+    const rows = [];
+    Object.entries(cells).forEach(([id, c]) => {
+      if (!cellDisplay(c)) return;
+      const positionForn = c.fornecedor || '';
+      const prods = c.produtos && c.produtos.length > 0 && c.produtos[0].nome
+        ? c.produtos.filter(p => p.nome || p.sku)
+        : (c.nome || c.descricao)
+          ? [{ sku: c.sku||'', nome: c.nome||c.descricao||'', qtd: c.qtd, valorUnit: c.valorUnit, curva: c.curva, fornecedor: c.fornecedor||'' }]
+          : [];
+      prods.forEach(p => {
+        const fornEff = (p.fornecedor && p.fornecedor.trim()) ? p.fornecedor : positionForn;
+        const qtdN = parseInt(p.qtd||0)||0;
+        const valUnit = parseFloat(p.valorUnit||0)||0;
+        const diasOcupado = c.dataEntrada
+          ? Math.max(1, Math.ceil((Date.now() - new Date(c.dataEntrada + 'T00:00:00')) / 86400000))
+          : '';
+        const dimCaixa = (p.comprimento || p.largura || p.altura)
+          ? `${p.comprimento||''}x${p.largura||''}x${p.altura||''}`
+          : '';
+        rows.push({
+          id, loja: c.loja||'', fornecedor: fornEff,
+          sku: p.sku||'', nome: p.nome||'', qtdN, valUnit,
+          curva: p.curva||'', dataEntrada: c.dataEntrada||'',
+          diasOcupado,
+          qtdCaixas: p.qtdCaixas||'',
+          dimCaixa, pesoCaixa: p.pesoCaixa||'',
+        });
+      });
+    });
+
+    // ── Aba 1: TOTAL POR SKU ──────────────────────────────────────────
+    const bySku = {};
+    rows.forEach(r => {
+      const key = (r.sku || r.nome || '(sem SKU)').trim();
+      if (!bySku[key]) bySku[key] = { sku: r.sku, nome: r.nome, qtdUnit:0, qtdCaixas:0, valUnit: r.valUnit, valTotal:0, curva: r.curva, lojas: new Set() };
+      bySku[key].qtdUnit += r.qtdN;
+      bySku[key].qtdCaixas += parseInt(r.qtdCaixas||0)||0;
+      bySku[key].valTotal += r.qtdN * r.valUnit;
+      if (r.loja) bySku[key].lojas.add(r.loja);
+    });
+    const aba1 = Object.values(bySku).sort((a,b) => b.valTotal - a.valTotal).map(g => ({
+      'SKU': g.sku,
+      'Nome': g.nome,
+      'Qtd Total Unitária': g.qtdUnit,
+      'Qtd Total Caixas': g.qtdCaixas || '',
+      'Val.Unit (R$)': canSeeValues ? g.valUnit : '',
+      'Val.Total (R$)': canSeeValues ? g.valTotal.toFixed(2) : '',
+      'Curva': g.curva,
+      'Lojas': [...g.lojas].join(', '),
+    }));
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(aba1), 'TOTAL POR SKU');
+
+    // ── Aba 2: CONTROLE DE ESTOQUE ────────────────────────────────────
+    const aba2 = rows.map(r => ({
+      'Endereço': r.id,
+      'SKU': r.sku,
+      'Nome': r.nome,
+      'Qtd Unit': r.qtdN,
+      'Qtd Caixas': r.qtdCaixas,
+      'Val.Unit (R$)': canSeeValues ? r.valUnit : '',
+      'Val.Total (R$)': canSeeValues ? (r.qtdN * r.valUnit).toFixed(2) : '',
+      'Curva': r.curva,
+      'Loja': r.loja,
+      'Fornecedor': r.fornecedor,
+      'Data Entrada': r.dataEntrada,
+      'Dias Ocupado': r.diasOcupado,
+      'Dimensões Caixa (CxLxA cm)': r.dimCaixa,
+      'Peso Caixa (kg)': r.pesoCaixa,
+    }));
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(aba2), 'CONTROLE DE ESTOQUE');
+
+    XLSX.writeFile(wb, `inventario-${today}.xlsx`);
+    logAction(user, 'EXPORT_EXCEL', `Inventário exportado em ${today}`).catch(()=>{});
   }
 
   function toggleColetaItem(slot) {
@@ -837,6 +918,7 @@ export default function Wms() {
                 <button onClick={()=>setInvView('fornecedor')} style={{padding:'8px 14px',background:invView==='fornecedor'?'#f97316':'transparent',color:invView==='fornecedor'?'#fff':'#C0C2CC',border:'none',borderRadius:6,fontWeight:700,cursor:'pointer',fontFamily:'inherit',fontSize:13}}>Por Fornecedor</button>
               </div>
               <input className="wms-search" style={{flex:1,minWidth:200,margin:0}} placeholder="Buscar por nome, SKU ou endereço..." value={search} onChange={e=>setSearch(e.target.value)} />
+              {canSeeValues && <button onClick={exportExcel} style={{padding:'8px 16px',background:'#16a34a',color:'#fff',border:'none',borderRadius:6,fontWeight:700,cursor:'pointer',fontFamily:'inherit',fontSize:13,whiteSpace:'nowrap'}}>↓ Baixar Excel</button>}
             </div>
 
             {/* Filters */}
