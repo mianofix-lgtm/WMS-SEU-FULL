@@ -1,6 +1,6 @@
 import { useState, useEffect, createContext, useContext } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
-import { onAuth, getPerms, autoBackup } from './firebase.js';
+import { onAuth, getPerms, getEffectivePerms, autoBackup } from './firebase.js';
 import Landing from './Landing.jsx';
 import Login from './Login.jsx';
 import Portal from './Portal.jsx';
@@ -40,7 +40,7 @@ export default function App() {
     return unsub;
   }, []);
 
-  const perms = user ? getPerms(user.role) : {};
+  const perms = user ? getEffectivePerms(user.role, user.permissionOverrides) : {};
 
   return (
     <AuthContext.Provider value={{ user, setUser, loading, perms }}>

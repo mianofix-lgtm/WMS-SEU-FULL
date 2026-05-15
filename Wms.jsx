@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect, useCallback } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { useAuth } from "./App.jsx";
-import { getPerms, logout, getWmsData, saveWmsData, wmsSaveCell, wmsClearCell, wmsMoveCell, wmsArchiveCells, db, logAction } from "./firebase.js";
+import { logout, getWmsData, saveWmsData, wmsSaveCell, wmsClearCell, wmsMoveCell, wmsArchiveCells, db, logAction } from "./firebase.js";
 import { LOGO_ICON } from "./logo.js";
 import * as XLSX from 'xlsx';
 import { doc, getDoc, setDoc } from "firebase/firestore";
@@ -52,7 +52,7 @@ function cellDisplay(c) {
 
 
 export default function Wms() {
-  const { user, setUser } = useAuth();
+  const { user, setUser, perms } = useAuth();
   const nav = useNavigate();
   const [cells, setCells] = useState({});
   const [sel, setSel] = useState(null);
@@ -87,8 +87,7 @@ export default function Wms() {
   const [invForn, setInvForn] = useState('');
   const [invCurva, setInvCurva] = useState('');
 
-  // Permissions
-  const perms = getPerms(user?.role);
+  // Permissions (effective = role base ∪ permissionOverrides, computed in App.jsx context)
   const canDelete = perms.canDelete;
   const canSeeValues = perms.canSeeValues;
   const canEdit = perms.canEdit;

@@ -27,6 +27,14 @@ export const PERMISSIONS = {
 export function getPerms(role) {
   return PERMISSIONS[role] || PERMISSIONS.cliente;
 }
+
+export function getEffectivePerms(role, overrides = []) {
+  const base = getPerms(role);
+  if (!overrides?.length) return base;
+  const result = { ...base };
+  overrides.forEach(k => { if (k in result) result[k] = true; });
+  return result;
+}
  
 // ─── Auth helpers ────────────────────────────────────────
 export async function login(email, password) {

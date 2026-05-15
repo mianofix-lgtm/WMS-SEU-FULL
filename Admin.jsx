@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from './App.jsx';
 import { LOGO_ICON } from './logo.js';
-import { getAllUsers, approveUser, rejectUser, db, getPricing, savePricing, DEFAULT_PRICES, getWmsData, logAction, getLogs } from './firebase.js';
+import { getAllUsers, approveUser, rejectUser, db, getPricing, savePricing, DEFAULT_PRICES, getWmsData, logAction, getLogs, PERMISSIONS } from './firebase.js';
 import { doc, updateDoc, deleteDoc, collection, getDocs, getDoc, setDoc } from 'firebase/firestore';
 
 export default function Admin() {
@@ -13,7 +13,7 @@ export default function Admin() {
   const [approveModal, setApproveModal] = useState(null);
   const [lojaInput, setLojaInput] = useState('');
   const [editModal, setEditModal] = useState(null);
-  const [editForm, setEditForm] = useState({nome:'',role:'',loja:'',status:''});
+  const [editForm, setEditForm] = useState({nome:'',role:'',loja:'',status:'',permissionOverrides:[]});
   const [prices, setPrices] = useState(DEFAULT_PRICES);
   const [pricesTab, setPricesTab] = useState(false);
   const [pricesSaved, setPricesSaved] = useState(false);
@@ -127,10 +127,17 @@ export default function Admin() {
     try { await rejectUser(u.uid); showToast('Rejeitado.'); loadUsers(); } catch(e) { showToast('Erro: '+e.message); }
   }
 
-  function openEdit(u) { setEditForm({nome:u.nome||'',role:u.role||'cliente',loja:u.loja||'',status:u.status||'ativo'}); setEditModal(u); }
+  function openEdit(u) { setEditForm({nome:u.nome||'',role:u.role||'cliente',loja:u.loja||'',status:u.status||'ativo',permissionOverrides:u.permissionOverrides||[]}); setEditModal(u); }
 
   async function handleEditSave() {
-    try { await updateDoc(doc(db,'users',editModal.uid),{nome:editForm.nome,role:editForm.role,loja:editForm.loja,status:editForm.status}); showToast(`${editForm.nome} atualizado!`); setEditModal(null); loadUsers(); } catch(e) { showToast('Erro: '+e.message); }
+    try { await updateDoc(doc(db,'users',editModal.uid),{nome:editForm.nome,role:editForm.role,loja:editForm.loja,status:editForm.status,permissionOverrides:editForm.permissionOverrides}); showToast(`${editForm.nome} atualizado!`); setEditModal(null); loadUsers(); } catch(e) { showToast('Erro: '+e.message); }
+  }
+
+  function toggleOverride(key) {
+    setEditForm(f => {
+      const has = f.permissionOverrides.includes(key);
+      return { ...f, permissionOverrides: has ? f.permissionOverrides.filter(k=>k!==key) : [...f.permissionOverrides, key] };
+    });
   }
 
   async function handleDelete(u) {
@@ -206,12 +213,45 @@ export default function Admin() {
         <div style={{display:'flex',gap:10,justifyContent:'flex-end'}}><button onClick={()=>setApproveModal(null)} style={bgS}>Cancelar</button><button onClick={handleApprove} style={bmS}>Aprovar →</button></div>
       </div></div>}
 
-      {editModal && <div style={ovS} onClick={()=>setEditModal(null)}><div style={mdS} onClick={e=>e.stopPropagation()}>
+      {editModal && <div style={ovS} onClick={()=>setEditModal(null)}><div style={{...mdS,maxWidth:520,maxHeight:'90vh',overflowY:'auto'}} onClick={e=>e.stopPropagation()}>
         <h3 style={{fontSize:20,fontWeight:800,marginBottom:16}}>Editar — {editModal.email}</h3>
         <label style={lbS}>Nome</label><input value={editForm.nome} onChange={e=>setEditForm(f=>({...f,nome:e.target.value}))} style={inS} />
-        <label style={lbS}>Perfil</label><select value={editForm.role} onChange={e=>setEditForm(f=>({...f,role:e.target.value}))} style={inS}><option value="diretor">Diretor</option><option value="comercial">Comercial</option><option value="financeiro">Financeiro</option><option value="logistica">Logística</option><option value="cliente">Cliente</option></select>
+        <label style={lbS}>Perfil</label><select value={editForm.role} onChange={e=>setEditForm(f=>({...f,role:e.target.value,permissionOverrides:[]}))} style={inS}><option value="diretor">Diretor</option><option value="comercial">Comercial</option><option value="financeiro">Financeiro</option><option value="logistica">Logística</option><option value="cliente">Cliente</option></select>
         <label style={lbS}>Loja</label><input value={editForm.loja} onChange={e=>setEditForm(f=>({...f,loja:e.target.value}))} style={inS} placeholder="Para clientes" />
         <label style={lbS}>Status</label><select value={editForm.status} onChange={e=>setEditForm(f=>({...f,status:e.target.value}))} style={inS}><option value="ativo">Ativo</option><option value="pendente">Pendente</option><option value="rejeitado">Rejeitado</option></select>
+
+        {/* Permissões Adicionais */}
+        <div style={{marginBottom:16}}>
+          <div style={{fontSize:12,fontWeight:700,color:'#8B8D97',textTransform:'uppercase',letterSpacing:1,marginBottom:8}}>Permissões Adicionais</div>
+          <div style={{background:'#161820',border:'1px solid #1E2028',borderRadius:8,padding:12,fontSize:13}}>
+            <div style={{fontSize:11,color:'#8B8D97',marginBottom:10}}>As marcadas em cinza já estão incluídas no perfil selecionado. Marque as demais para liberar acesso pontual sem mudar o perfil.</div>
+            {[
+              {key:'canSeeAll',    label:'Ver todos os dados'},
+              {key:'canEdit',      label:'Editar posições'},
+              {key:'canSeeValues', label:'Ver valores (R$)'},
+              {key:'canEditValues',label:'Editar valores'},
+              {key:'canDelete',    label:'Excluir posições'},
+            ].map(({key,label}) => {
+              const baseRole = PERMISSIONS[editForm.role] || PERMISSIONS.cliente;
+              const fromRole = !!baseRole[key];
+              const inOverride = editForm.permissionOverrides.includes(key);
+              const active = fromRole || inOverride;
+              return (
+                <label key={key} style={{display:'flex',alignItems:'center',gap:10,padding:'7px 0',borderBottom:'1px solid #1E202840',cursor:fromRole?'default':'pointer',opacity:1}}>
+                  <input type="checkbox" checked={active} disabled={fromRole} onChange={()=>!fromRole&&toggleOverride(key)}
+                    style={{width:15,height:15,accentColor:'#00C896',cursor:fromRole?'default':'pointer'}} />
+                  <span style={{flex:1,color:active?'#fff':'#8B8D97',fontWeight:active?600:400}}>{label}</span>
+                  {fromRole
+                    ? <span style={{fontSize:10,padding:'2px 7px',borderRadius:4,background:'#1E2028',color:'#8B8D97',fontWeight:600,textTransform:'uppercase'}}>Perfil {editForm.role}</span>
+                    : inOverride
+                      ? <span style={{fontSize:10,padding:'2px 7px',borderRadius:4,background:'#00C89620',color:'#00C896',fontWeight:600,textTransform:'uppercase'}}>Override</span>
+                      : null}
+                </label>
+              );
+            })}
+          </div>
+        </div>
+
         <div style={{display:'flex',gap:10,justifyContent:'flex-end',marginTop:8}}><button onClick={()=>setEditModal(null)} style={bgS}>Cancelar</button><button onClick={handleEditSave} style={bmS}>Salvar →</button></div>
       </div></div>}
 
