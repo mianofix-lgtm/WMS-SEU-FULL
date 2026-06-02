@@ -84,8 +84,7 @@ export default function Billing() {
         if (!lojaMap[key]) lojaMap[key] = name.trim();
       };
       Object.values(wms).forEach(c => addLoja(c.loja));
-      allUsers.filter(u => u.role === 'cliente' && u.loja).forEach(u => addLoja(u.loja));
-      ['Iscali','Mianofix','Gama','PocianaX'].forEach(l => addLoja(l));
+      allUsers.filter(u => u.loja && u.status === 'ativo').forEach(u => addLoja(u.loja));
       const uniqueLojas = Object.values(lojaMap).sort();
       setClients(uniqueLojas);
       if (uniqueLojas.length > 0 && !selClient) setSelClient(uniqueLojas[0]);
@@ -155,6 +154,7 @@ export default function Billing() {
   function calcSaleValue(s) {
     const q = parseInt(s.qtd) || 1;
     const custom = parseFloat(s.valorCustom) || 0;
+    if (custom > 0) return custom;
     if (s.canal === 'Full ML') return q * PRICES.full_unit;
     if (s.canal === 'Flex') return q * PRICES.flex;
     if (s.canal === 'Correios' || s.canal === 'Places') return q * PRICES.correios_places;
@@ -164,9 +164,8 @@ export default function Billing() {
     }
     if (s.canal === 'Montagem Embalagem') return q * 0.50;
     if (s.canal === 'Triagem Devoluções') return q * PRICES.devolucao;
-    if (s.canal === 'Frete/Coleta') return custom || (q * 50);
-    if (s.canal === 'SAC' || s.canal === 'Retirada de Produtos' || s.canal === 'Hub e ERP' || s.canal === 'Coworking' || s.canal === 'Outros') return custom;
-    return custom;
+    if (s.canal === 'Frete/Coleta') return q * 50;
+    return 0;
   }
 
   function editSale(s) {
@@ -177,7 +176,7 @@ export default function Billing() {
       canal: s.canal || 'Full ML',
       qtd: String(s.qtd || 1),
       kitTier: s.kitTier || 'small',
-      valorCustom: s.valorCustom || '',
+      valorCustom: s.valorCustom || (s.valor != null ? String(s.valor) : ''),
       descCustom: s.descCustom || '',
       dataVenda: s.dataVenda || (s.data ? s.data.substring(0,10) : ''),
       numEnvio: s.numEnvio || '',
@@ -579,10 +578,8 @@ tr:nth-child(even){background:#fafafa;}
                   <option value="medium">Médio (R$1,50/u)</option>
                   <option value="large">Grande (R$4,00/u)</option>
                 </select></div>}
-                {['Frete/Coleta','SAC','Retirada de Produtos','Hub e ERP','Coworking','Outros'].includes(newSale.canal) && <>
-                  <div><label style={S.label}>Valor (R$)</label><input type="number" value={newSale.valorCustom} onChange={e=>setNewSale(f=>({...f,valorCustom:e.target.value}))} style={{...S.input,width:110}} placeholder="0.00" step="0.01" /></div>
-                  {newSale.canal === 'Outros' && <div><label style={S.label}>Descrição</label><input value={newSale.descCustom} onChange={e=>setNewSale(f=>({...f,descCustom:e.target.value}))} style={{...S.input,width:160}} placeholder="Descreva o serviço" /></div>}
-                </>}
+                <div><label style={S.label}>Valor (R$)</label><input type="number" value={newSale.valorCustom} onChange={e=>setNewSale(f=>({...f,valorCustom:e.target.value}))} style={{...S.input,width:110}} placeholder="auto" step="0.01" /></div>
+                {newSale.canal === 'Outros' && <div><label style={S.label}>Descrição</label><input value={newSale.descCustom} onChange={e=>setNewSale(f=>({...f,descCustom:e.target.value}))} style={{...S.input,width:160}} placeholder="Descreva o serviço" /></div>}
                 <button onClick={addSale} style={{...S.btnMain,background:editingSale?'#fbbf24':'#00C896'}}>{editingSale ? '✓ Salvar Edição' : '+ Registrar'}</button>
                 {editingSale && <button onClick={()=>{setEditingSale(null);setNewSale({numero:'',produto:'',canal:'Full ML',qtd:'1',kitTier:'small',valorCustom:'',descCustom:'',dataVenda:'',numEnvio:''});}} style={{padding:'10px 16px',background:'transparent',border:'1px solid #1E2028',borderRadius:8,color:'#8B8D97',cursor:'pointer',fontFamily:'inherit',fontSize:12}}>Cancelar</button>}
               </div>
