@@ -7,20 +7,19 @@ import { doc, getDoc, setDoc, collection, getDocs } from 'firebase/firestore';
 
 
 
-const CHANNELS = [
-  'Full ML',
-  'Flex', 
-  'Correios',
-  'Places',
-  'Kit',
-  'Montagem Embalagem',
-  'Triagem Devoluções',
-  'SAC',
-  'Retirada de Produtos',
-  'Frete/Coleta',
-  'Hub e ERP',
-  'Coworking',
-  'Outros',
+const SERVICES = [
+  { label: 'Preparo Full ML',         priceKey: 'full_unit' },
+  { label: 'Envio Flex',              priceKey: 'flex' },
+  { label: 'Correios/Places',         priceKey: 'correios_places' },
+  { label: 'Etiquetagem Full',        priceKey: 'etiq_full' },
+  { label: 'Etiquetagem Recebimento', priceKey: 'etiq_receb' },
+  { label: 'Recebimento Caixa',       priceKey: 'receb_caixa' },
+  { label: 'Kit Pequeno',             priceKey: 'kit_small' },
+  { label: 'Kit Médio',               priceKey: 'kit_medium' },
+  { label: 'Kit Grande',              priceKey: 'kit_large' },
+  { label: 'Montagem Embalagem',      priceKey: 'montagem_embalagem' },
+  { label: 'Triagem Devoluções',      priceKey: 'devolucao' },
+  { label: 'Outros',                  priceKey: null },
 ];
 
 export default function Billing() {
@@ -30,7 +29,7 @@ export default function Billing() {
   const [selClient, setSelClient] = useState(null);
   const [sales, setSales] = useState([]);
   const [pallets, setPallets] = useState([]);
-  const [newSale, setNewSale] = useState({numero:'',produto:'',canal:'Full ML',qtd:'1',kitTier:'small',valorCustom:'',descCustom:'',dataVenda:'',numEnvio:''});
+  const [newSale, setNewSale] = useState({numero:'',produto:'',canal:'Preparo Full ML',qtd:'1',valorCustom:'',descCustom:'',dataVenda:'',numEnvio:''});
   const [editingSale, setEditingSale] = useState(null);
   const [loading, setLoading] = useState(true);
   const [month, setMonth] = useState(() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`; });
@@ -134,7 +133,6 @@ export default function Billing() {
       produto: newSale.produto || newSale.descCustom || newSale.canal,
       canal: newSale.canal,
       qtd: parseInt(newSale.qtd) || 1,
-      kitTier: newSale.canal === 'Kit' ? newSale.kitTier : null,
       valorCustom: newSale.valorCustom,
       valorUnitario: calcUnitPrice(newSale),
       descCustom: newSale.descCustom,
@@ -146,22 +144,31 @@ export default function Billing() {
     const next = editingSale ? sales.map(s => s.id === editingSale ? sale : s) : [sale, ...sales];
     setSales(next);
     await saveClientData(next, pallets);
-    setNewSale({numero:'',produto:'',canal:newSale.canal,qtd:'1',kitTier:'small',valorCustom:'',descCustom:'',dataVenda:'',numEnvio:''});
+    setNewSale({numero:'',produto:'',canal:newSale.canal,qtd:'1',valorCustom:'',descCustom:'',dataVenda:'',numEnvio:''});
     setEditingSale(null);
     showToast(editingSale ? 'Venda atualizada!' : 'Venda registrada!');
     logAction(user, editingSale ? 'BILLING_EDIT' : 'BILLING_ADD', `${selClient}: ${sale.canal} - ${sale.produto} x${sale.qtd} = R$${sale.valor.toFixed(2)}`).catch(()=>{});
   }
 
+  function handleServiceChange(label) {
+    const svc = SERVICES.find(s => s.label === label);
+    const price = svc?.priceKey != null ? (PRICES[svc.priceKey] ?? '') : '';
+    setNewSale(f => ({...f, canal: label, valorCustom: price !== '' ? String(price) : ''}));
+  }
+
   function calcUnitPrice(s) {
-    const custom = parseFloat(s.valorCustom) || 0;
-    if (custom > 0) return custom;
+    const custom = parseFloat(s.valorCustom);
+    if (!isNaN(custom) && custom > 0) return custom;
+    // New service-based lookup
+    const svc = SERVICES.find(sv => sv.label === s.canal);
+    if (svc?.priceKey) return PRICES[svc.priceKey] || 0;
+    // Legacy canal names for backward compat with saved data
     if (s.canal === 'Full ML') return PRICES.full_unit;
     if (s.canal === 'Flex') return PRICES.flex;
     if (s.canal === 'Correios' || s.canal === 'Places') return PRICES.correios_places;
     if (s.canal === 'Kit') {
       return s.kitTier === 'large' ? PRICES.kit_large : s.kitTier === 'medium' ? PRICES.kit_medium : PRICES.kit_small;
     }
-    if (s.canal === 'Montagem Embalagem') return 0.50;
     if (s.canal === 'Triagem Devoluções') return PRICES.devolucao;
     if (s.canal === 'Frete/Coleta') return 50;
     return 0;
@@ -176,9 +183,8 @@ export default function Billing() {
     setNewSale({
       numero: s.numero || '',
       produto: s.produto || '',
-      canal: s.canal || 'Full ML',
+      canal: s.canal || 'Preparo Full ML',
       qtd: String(s.qtd || 1),
-      kitTier: s.kitTier || 'small',
       valorCustom: s.valorUnitario != null ? String(s.valorUnitario) : (s.valorCustom || ''),
       descCustom: s.descCustom || '',
       dataVenda: s.dataVenda || (s.data ? s.data.substring(0,10) : ''),
@@ -362,13 +368,11 @@ tr:nth-child(even){background:#fafafa;}
   // ─── Totals ───
   const totals = useMemo(() => {
     const salesByChannel = {};
-    CHANNELS.forEach(ch => { salesByChannel[ch] = { count: 0, units: 0, valor: 0 }; });
     sales.forEach(s => {
-      if (salesByChannel[s.canal]) {
-        salesByChannel[s.canal].count++;
-        salesByChannel[s.canal].units += s.qtd || 1;
-        salesByChannel[s.canal].valor += s.valor || 0;
-      }
+      if (!salesByChannel[s.canal]) salesByChannel[s.canal] = { count: 0, units: 0, valor: 0 };
+      salesByChannel[s.canal].count++;
+      salesByChannel[s.canal].units += s.qtd || 1;
+      salesByChannel[s.canal].valor += s.valor || 0;
     });
 
     // Count WMS positions for this client (auto-detected)
@@ -526,7 +530,7 @@ tr:nth-child(even){background:#fafafa;}
               <tbody>
                 <tr><td style={S.td}>WMS + Portal</td><td style={{...S.td,textAlign:'right'}}>1</td><td style={{...S.td,textAlign:'right'}}>R$ 2.000,00</td><td style={{...S.td,textAlign:'right',fontWeight:700}}>R$ {totals.wms.toLocaleString('pt-BR',{minimumFractionDigits:2})}</td></tr>
                 <tr><td style={S.td}>Armazenagem ({clientPositions} posições no WMS{totals.finalPalletCost <= totals.minPalletCost ? ' — mínimo aplicado' : ''})</td><td style={{...S.td,textAlign:'right'}}>{clientPositions} posições</td><td style={{...S.td,textAlign:'right'}}>R$ {PRICES.pallet_month.toFixed(2)}/mês</td><td style={{...S.td,textAlign:'right',fontWeight:700}}>R$ {totals.finalPalletCost.toLocaleString('pt-BR',{minimumFractionDigits:2})}</td></tr>
-                {CHANNELS.map(ch => {
+                {Object.keys(totals.salesByChannel).map(ch => {
                   const d = totals.salesByChannel[ch];
                   if (!d || d.count === 0) return null;
                   return <tr key={ch}><td style={S.td}>{ch}</td><td style={{...S.td,textAlign:'right'}}>{d.units} unid / {d.count} lanç.</td><td style={{...S.td,textAlign:'right'}}>-</td><td style={{...S.td,textAlign:'right',fontWeight:700}}>R$ {d.valor.toLocaleString('pt-BR',{minimumFractionDigits:2})}</td></tr>;
@@ -574,17 +578,12 @@ tr:nth-child(even){background:#fafafa;}
                 <div><label style={S.label}>Nº Venda/Pedido</label><input value={newSale.numero} onChange={e=>setNewSale(f=>({...f,numero:e.target.value}))} style={{...S.input,width:140}} placeholder="MLB-123..." /></div>
                 <div><label style={S.label}>Nº Envio/Frete</label><input value={newSale.numEnvio} onChange={e=>setNewSale(f=>({...f,numEnvio:e.target.value}))} style={{...S.input,width:140}} placeholder="Nº envio..." /></div>
                 <div><label style={S.label}>Produto</label><input value={newSale.produto} onChange={e=>setNewSale(f=>({...f,produto:e.target.value}))} style={{...S.input,width:180}} placeholder="Nome do produto" /></div>
-                <div><label style={S.label}>Canal</label><select value={newSale.canal} onChange={e=>setNewSale(f=>({...f,canal:e.target.value}))} style={{...S.input,width:180}}>{CHANNELS.map(c=><option key={c} value={c}>{c}</option>)}</select></div>
+                <div><label style={S.label}>Serviço</label><select value={newSale.canal} onChange={e=>handleServiceChange(e.target.value)} style={{...S.input,width:220}}>{SERVICES.map(s=><option key={s.label} value={s.label}>{s.label}</option>)}</select></div>
                 <div><label style={S.label}>Qtd</label><input type="number" value={newSale.qtd} onChange={e=>setNewSale(f=>({...f,qtd:e.target.value}))} style={{...S.input,width:70}} min="1" /></div>
-                {newSale.canal === 'Kit' && <div><label style={S.label}>Tier Kit</label><select value={newSale.kitTier} onChange={e=>setNewSale(f=>({...f,kitTier:e.target.value}))} style={{...S.input,width:140}}>
-                  <option value="small">Pequeno (R$0,50/u)</option>
-                  <option value="medium">Médio (R$1,50/u)</option>
-                  <option value="large">Grande (R$4,00/u)</option>
-                </select></div>}
                 <div><label style={S.label}>Valor Unit. (R$)</label><input type="number" value={newSale.valorCustom} onChange={e=>setNewSale(f=>({...f,valorCustom:e.target.value}))} style={{...S.input,width:110}} placeholder="auto" step="0.01" /></div>
                 {newSale.canal === 'Outros' && <div><label style={S.label}>Descrição</label><input value={newSale.descCustom} onChange={e=>setNewSale(f=>({...f,descCustom:e.target.value}))} style={{...S.input,width:160}} placeholder="Descreva o serviço" /></div>}
                 <button onClick={addSale} style={{...S.btnMain,background:editingSale?'#fbbf24':'#00C896'}}>{editingSale ? '✓ Salvar Edição' : '+ Registrar'}</button>
-                {editingSale && <button onClick={()=>{setEditingSale(null);setNewSale({numero:'',produto:'',canal:'Full ML',qtd:'1',kitTier:'small',valorCustom:'',descCustom:'',dataVenda:'',numEnvio:''});}} style={{padding:'10px 16px',background:'transparent',border:'1px solid #1E2028',borderRadius:8,color:'#8B8D97',cursor:'pointer',fontFamily:'inherit',fontSize:12}}>Cancelar</button>}
+                {editingSale && <button onClick={()=>{setEditingSale(null);setNewSale({numero:'',produto:'',canal:'Preparo Full ML',qtd:'1',valorCustom:'',descCustom:'',dataVenda:'',numEnvio:''});}} style={{padding:'10px 16px',background:'transparent',border:'1px solid #1E2028',borderRadius:8,color:'#8B8D97',cursor:'pointer',fontFamily:'inherit',fontSize:12}}>Cancelar</button>}
               </div>
             </div>
 

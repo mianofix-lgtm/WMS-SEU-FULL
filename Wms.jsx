@@ -605,7 +605,7 @@ export default function Wms() {
               <span className="wms-user-name">{user?.nome || user?.email}</span>
               <span className="wms-user-role">{user?.role}</span>
             </div>
-            {user?.role === "diretor" && <Link to="/dashboard" className="wms-portal-link" style={{color:"#00C896"}}>Dashboard</Link>}
+            {['diretor','comercial','financeiro'].includes(user?.role) && <Link to="/dashboard" className="wms-portal-link" style={{color:"#00C896"}}>Dashboard</Link>}
             {user?.role === "diretor" && <Link to="/admin" className="wms-portal-link" style={{color:"#fbbf24"}}>Admin</Link>}
             {(user?.role === "diretor" || user?.role === "comercial") && <Link to="/billing" className="wms-portal-link" style={{color:"#f97316"}}>Faturamento</Link>}
             <Link to="/portal" className="wms-portal-link">Portal</Link>
