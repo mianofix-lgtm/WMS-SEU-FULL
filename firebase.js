@@ -1,4 +1,4 @@
-import { initializeApp } from 'firebase/app';
+import { initializeApp, getApps } from 'firebase/app';
 import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged, createUserWithEmailAndPassword } from 'firebase/auth';
 import { getFirestore, doc, getDoc, setDoc, collection, getDocs, query, where, updateDoc, deleteDoc, runTransaction } from 'firebase/firestore';
  
@@ -34,6 +34,34 @@ export function getEffectivePerms(role, overrides = []) {
   const result = { ...base };
   overrides.forEach(k => { if (k in result) result[k] = true; });
   return result;
+}
+
+// ─── Granular module/action permissions ──────────────────
+export const GRANULAR_PERMISSIONS = [
+  { key:'wms.ver_estoque',         label:'Ver estoque',               module:'WMS',                  includedIn:['diretor','comercial','financeiro','logistica'] },
+  { key:'wms.editar_posicoes',     label:'Editar posições',           module:'WMS',                  includedIn:['diretor','comercial','logistica'] },
+  { key:'wms.excluir_posicoes',    label:'Excluir posições',          module:'WMS',                  includedIn:['diretor'] },
+  { key:'wms.ver_valores',         label:'Ver valores R$',            module:'WMS',                  includedIn:['diretor','comercial','financeiro'] },
+  { key:'wms.editar_valores',      label:'Editar valores',            module:'WMS',                  includedIn:['diretor','comercial'] },
+  { key:'billing.ver',             label:'Ver faturamento',           module:'Faturamento',          includedIn:['diretor','comercial'] },
+  { key:'billing.editar',          label:'Editar lançamentos',        module:'Faturamento',          includedIn:['diretor','comercial'] },
+  { key:'billing.pdf',             label:'Gerar PDF',                 module:'Faturamento',          includedIn:['diretor','comercial'] },
+  { key:'billing.ver_precos',      label:'Ver tabela de preços',      module:'Faturamento',          includedIn:['diretor','comercial'] },
+  { key:'billing.editar_precos',   label:'Editar tabela de preços',   module:'Faturamento',          includedIn:['diretor'] },
+  { key:'dashboard.ver',           label:'Ver dashboard',             module:'Dashboard Financeiro', includedIn:['diretor','comercial','financeiro'] },
+  { key:'dashboard.ver_pl',        label:'Ver P&L',                   module:'Dashboard Financeiro', includedIn:['diretor','comercial','financeiro'] },
+  { key:'dashboard.editar_custos', label:'Editar custos operacionais',module:'Dashboard Financeiro', includedIn:['diretor'] },
+  { key:'admin.usuarios',          label:'Gestão de usuários',        module:'Admin',                includedIn:['diretor'] },
+  { key:'admin.clientes',          label:'Gestão de clientes/lojas',  module:'Admin',                includedIn:['diretor','comercial'] },
+  { key:'admin.config',            label:'Ver configurações',         module:'Admin',                includedIn:['diretor'] },
+];
+
+export function checkPerm(user, permKey) {
+  if (!user) return false;
+  const perm = GRANULAR_PERMISSIONS.find(p => p.key === permKey);
+  if (!perm) return false;
+  if (perm.includedIn.includes(user.role)) return true;
+  return !!user.extraPermissions?.[permKey];
 }
  
 // ─── Auth helpers ────────────────────────────────────────
@@ -96,6 +124,26 @@ export async function registerClient(email, password, clientData) {
   return cred.user.uid;
 }
  
+// Invite collaborator without signing out the current admin
+function generateTempPassword() {
+  const chars = 'ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789!@#';
+  return Array.from({length: 12}, () => chars[Math.floor(Math.random() * chars.length)]).join('');
+}
+
+export async function inviteCollaborator(name, email, role, loja = '') {
+  const tempPassword = generateTempPassword();
+  const secondaryApp = getApps().find(a => a.name === 'secondary') || initializeApp(firebaseConfig, 'secondary');
+  const secondaryAuth = getAuth(secondaryApp);
+  const cred = await createUserWithEmailAndPassword(secondaryAuth, email, tempPassword);
+  await setDoc(doc(db, 'users', cred.user.uid), {
+    email, nome: name, role, loja: loja || '', status: 'ativo',
+    permissionOverrides: [], extraPermissions: {},
+    createdAt: new Date().toISOString(),
+  });
+  await signOut(secondaryAuth);
+  return { uid: cred.user.uid, tempPassword };
+}
+
 // Get all users (admin)
 export async function getAllUsers() {
   const snap = await getDocs(collection(db, 'users'));

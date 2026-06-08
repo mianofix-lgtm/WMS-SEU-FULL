@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from './App.jsx';
 import { LOGO_ICON } from './logo.js';
-import { getAllUsers, approveUser, rejectUser, db, getPricing, savePricing, DEFAULT_PRICES, getWmsData, logAction, getLogs, PERMISSIONS } from './firebase.js';
+import { getAllUsers, approveUser, rejectUser, db, getPricing, savePricing, DEFAULT_PRICES, getWmsData, logAction, getLogs, PERMISSIONS, GRANULAR_PERMISSIONS, inviteCollaborator } from './firebase.js';
 import { doc, updateDoc, deleteDoc, collection, getDocs, getDoc, setDoc } from 'firebase/firestore';
 
 export default function Admin() {
@@ -13,7 +13,11 @@ export default function Admin() {
   const [approveModal, setApproveModal] = useState(null);
   const [lojaInput, setLojaInput] = useState('');
   const [editModal, setEditModal] = useState(null);
-  const [editForm, setEditForm] = useState({nome:'',role:'',loja:'',status:'',permissionOverrides:[]});
+  const [editForm, setEditForm] = useState({nome:'',role:'',loja:'',status:'',permissionOverrides:[],extraPermissions:{}});
+  const [inviteModal, setInviteModal] = useState(false);
+  const [inviteForm, setInviteForm] = useState({nome:'',email:'',role:'logistica',loja:''});
+  const [inviteResult, setInviteResult] = useState(null);
+  const [inviting, setInviting] = useState(false);
   const [prices, setPrices] = useState(DEFAULT_PRICES);
   const [pricesTab, setPricesTab] = useState(false);
   const [pricesSaved, setPricesSaved] = useState(false);
@@ -127,10 +131,26 @@ export default function Admin() {
     try { await rejectUser(u.uid); showToast('Rejeitado.'); loadUsers(); } catch(e) { showToast('Erro: '+e.message); }
   }
 
-  function openEdit(u) { setEditForm({nome:u.nome||'',role:u.role||'cliente',loja:u.loja||'',status:u.status||'ativo',permissionOverrides:u.permissionOverrides||[]}); setEditModal(u); }
+  function openEdit(u) { setEditForm({nome:u.nome||'',role:u.role||'cliente',loja:u.loja||'',status:u.status||'ativo',permissionOverrides:u.permissionOverrides||[],extraPermissions:u.extraPermissions||{}}); setEditModal(u); }
 
   async function handleEditSave() {
-    try { await updateDoc(doc(db,'users',editModal.uid),{nome:editForm.nome,role:editForm.role,loja:editForm.loja,status:editForm.status,permissionOverrides:editForm.permissionOverrides}); showToast(`${editForm.nome} atualizado!`); setEditModal(null); loadUsers(); } catch(e) { showToast('Erro: '+e.message); }
+    try {
+      const extraPermissions = Object.fromEntries(Object.entries(editForm.extraPermissions).filter(([,v]) => v === true));
+      await updateDoc(doc(db,'users',editModal.uid),{nome:editForm.nome,role:editForm.role,loja:editForm.loja,status:editForm.status,permissionOverrides:editForm.permissionOverrides,extraPermissions});
+      showToast(`${editForm.nome} atualizado!`); setEditModal(null); loadUsers();
+    } catch(e) { showToast('Erro: '+e.message); }
+  }
+
+  async function handleInvite() {
+    if (!inviteForm.email.trim() || !inviteForm.nome.trim()) { showToast('Preencha nome e e-mail'); return; }
+    setInviting(true);
+    try {
+      const { tempPassword } = await inviteCollaborator(inviteForm.nome.trim(), inviteForm.email.trim(), inviteForm.role, inviteForm.loja.trim());
+      setInviteResult({ email: inviteForm.email.trim(), nome: inviteForm.nome.trim(), tempPassword });
+      logAction(user, 'USER_INVITE', `${inviteForm.nome} convidado como ${inviteForm.role}`).catch(()=>{});
+      loadUsers();
+    } catch(e) { showToast('Erro: ' + (e.code === 'auth/email-already-in-use' ? 'E-mail já cadastrado' : e.message)); }
+    setInviting(false);
   }
 
   function toggleOverride(key) {
@@ -157,7 +177,10 @@ export default function Admin() {
         <div style={{display:'flex',gap:12}}><Link to="/wms" style={{padding:'6px 14px',background:'#161820',border:'1px solid #1E2028',borderRadius:6,color:'#00C896',fontSize:12,fontWeight:600,textDecoration:'none'}}>WMS</Link><Link to="/portal" style={{padding:'6px 14px',background:'#161820',border:'1px solid #1E2028',borderRadius:6,color:'#C0C2CC',fontSize:12,fontWeight:600,textDecoration:'none'}}>Portal</Link></div>
       </header>
       <div style={{maxWidth:1100,margin:'0 auto',padding:32}}>
-        <h1 style={{fontSize:28,fontWeight:800,marginBottom:8}}>Gestão de Usuários</h1>
+        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:8,flexWrap:'wrap',gap:12}}>
+          <h1 style={{fontSize:28,fontWeight:800,margin:0}}>Gestão de Usuários</h1>
+          <button onClick={()=>{setInviteModal(true);setInviteResult(null);setInviteForm({nome:'',email:'',role:'logistica',loja:''}); }} style={{padding:'10px 22px',background:'#00C896',color:'#2E2C3A',border:'none',borderRadius:8,fontWeight:700,cursor:'pointer',fontFamily:'inherit',fontSize:14}}>+ Convidar Colaborador</button>
+        </div>
         <p style={{color:'#8B8D97',marginBottom:32}}>{users.length} usuários · {pending.length} pendentes</p>
 
         {pending.length > 0 && <div style={{marginBottom:40}}>
@@ -216,7 +239,7 @@ export default function Admin() {
       {editModal && <div style={ovS} onClick={()=>setEditModal(null)}><div style={{...mdS,maxWidth:520,maxHeight:'90vh',overflowY:'auto'}} onClick={e=>e.stopPropagation()}>
         <h3 style={{fontSize:20,fontWeight:800,marginBottom:16}}>Editar — {editModal.email}</h3>
         <label style={lbS}>Nome</label><input value={editForm.nome} onChange={e=>setEditForm(f=>({...f,nome:e.target.value}))} style={inS} />
-        <label style={lbS}>Perfil</label><select value={editForm.role} onChange={e=>setEditForm(f=>({...f,role:e.target.value,permissionOverrides:[]}))} style={inS}><option value="diretor">Diretor</option><option value="comercial">Comercial</option><option value="financeiro">Financeiro</option><option value="logistica">Logística</option><option value="cliente">Cliente</option></select>
+        <label style={lbS}>Perfil</label><select value={editForm.role} onChange={e=>setEditForm(f=>({...f,role:e.target.value,permissionOverrides:[],extraPermissions:{}}))} style={inS}><option value="diretor">Diretor</option><option value="comercial">Comercial</option><option value="financeiro">Financeiro</option><option value="logistica">Logística</option><option value="cliente">Cliente</option></select>
         <label style={lbS}>Loja</label><input value={editForm.loja} onChange={e=>setEditForm(f=>({...f,loja:e.target.value}))} style={inS} placeholder="Para clientes" />
         <label style={lbS}>Status</label><select value={editForm.status} onChange={e=>setEditForm(f=>({...f,status:e.target.value}))} style={inS}><option value="ativo">Ativo</option><option value="pendente">Pendente</option><option value="rejeitado">Rejeitado</option></select>
 
@@ -252,7 +275,75 @@ export default function Admin() {
           </div>
         </div>
 
+        {/* Permissões Granulares por Módulo */}
+        <div style={{marginBottom:16}}>
+          <div style={{fontSize:12,fontWeight:700,color:'#8B8D97',textTransform:'uppercase',letterSpacing:1,marginBottom:10}}>Permissões por Módulo</div>
+          {['WMS','Faturamento','Dashboard Financeiro','Admin'].map(module => (
+            <div key={module} style={{marginBottom:12}}>
+              <div style={{fontSize:10,fontWeight:700,color:'#C0C2CC',textTransform:'uppercase',letterSpacing:1,marginBottom:6,paddingBottom:4,borderBottom:'1px solid #1E2028'}}>{module}</div>
+              {GRANULAR_PERMISSIONS.filter(p => p.module === module).map(perm => {
+                const fromRole = perm.includedIn.includes(editForm.role);
+                const hasOverride = !!editForm.extraPermissions[perm.key];
+                const active = fromRole || hasOverride;
+                return (
+                  <label key={perm.key} style={{display:'flex',alignItems:'center',gap:10,padding:'5px 0',borderBottom:'1px solid #1E202840',cursor:fromRole?'default':'pointer'}}>
+                    <input type="checkbox" checked={active} disabled={fromRole}
+                      onChange={() => !fromRole && setEditForm(f => ({...f, extraPermissions: {...f.extraPermissions, [perm.key]: !f.extraPermissions[perm.key]}}))}
+                      style={{width:14,height:14,accentColor:'#00C896',cursor:fromRole?'default':'pointer',flexShrink:0}} />
+                    <span style={{flex:1,color:active?'#fff':'#8B8D97',fontSize:12,fontWeight:active?600:400}}>{perm.label}</span>
+                    {fromRole
+                      ? <span style={{fontSize:10,padding:'2px 7px',borderRadius:4,background:'#1E2028',color:'#8B8D97',fontWeight:600,textTransform:'uppercase',whiteSpace:'nowrap'}}>PERFIL {editForm.role.toUpperCase()}</span>
+                      : hasOverride
+                        ? <span style={{fontSize:10,padding:'2px 7px',borderRadius:4,background:'#00C89620',color:'#00C896',fontWeight:600,textTransform:'uppercase'}}>OVERRIDE</span>
+                        : null}
+                  </label>
+                );
+              })}
+            </div>
+          ))}
+        </div>
+
         <div style={{display:'flex',gap:10,justifyContent:'flex-end',marginTop:8}}><button onClick={()=>setEditModal(null)} style={bgS}>Cancelar</button><button onClick={handleEditSave} style={bmS}>Salvar →</button></div>
+      </div></div>}
+
+      {inviteModal && <div style={ovS} onClick={()=>setInviteModal(false)}><div style={{...mdS,maxWidth:480}} onClick={e=>e.stopPropagation()}>
+        {!inviteResult ? <>
+          <h3 style={{fontSize:20,fontWeight:800,marginBottom:16}}>Convidar Colaborador</h3>
+          <label style={lbS}>Nome</label>
+          <input value={inviteForm.nome} onChange={e=>setInviteForm(f=>({...f,nome:e.target.value}))} style={inS} placeholder="Nome completo" />
+          <label style={lbS}>E-mail</label>
+          <input type="email" value={inviteForm.email} onChange={e=>setInviteForm(f=>({...f,email:e.target.value}))} style={inS} placeholder="email@empresa.com" />
+          <label style={lbS}>Perfil</label>
+          <select value={inviteForm.role} onChange={e=>setInviteForm(f=>({...f,role:e.target.value}))} style={inS}>
+            <option value="diretor">Diretor</option>
+            <option value="comercial">Comercial</option>
+            <option value="financeiro">Financeiro</option>
+            <option value="logistica">Logística</option>
+            <option value="cliente">Cliente</option>
+          </select>
+          <label style={lbS}>Loja (opcional)</label>
+          <input value={inviteForm.loja} onChange={e=>setInviteForm(f=>({...f,loja:e.target.value}))} style={inS} placeholder="Para clientes" />
+          <div style={{display:'flex',gap:10,justifyContent:'flex-end'}}>
+            <button onClick={()=>setInviteModal(false)} style={bgS}>Cancelar</button>
+            <button onClick={handleInvite} disabled={inviting} style={{...bmS,opacity:inviting?0.6:1}}>{inviting?'Criando...':'Criar Conta →'}</button>
+          </div>
+        </> : <>
+          <h3 style={{fontSize:20,fontWeight:800,marginBottom:8,color:'#00C896'}}>Conta criada!</h3>
+          <p style={{color:'#8B8D97',fontSize:14,marginBottom:16}}>Envie as credenciais abaixo para <strong style={{color:'#fff'}}>{inviteResult.nome}</strong>:</p>
+          <div style={{background:'#161820',border:'1px solid #1E2028',borderRadius:10,padding:16,marginBottom:16}}>
+            <div style={{fontSize:11,color:'#8B8D97',marginBottom:4}}>E-mail</div>
+            <div style={{fontSize:14,fontWeight:600,fontFamily:'monospace',color:'#fff',marginBottom:14}}>{inviteResult.email}</div>
+            <div style={{fontSize:11,color:'#8B8D97',marginBottom:6}}>Senha temporária</div>
+            <div style={{display:'flex',alignItems:'center',gap:8}}>
+              <code style={{fontSize:18,fontWeight:700,color:'#00C896',letterSpacing:2,flex:1,wordBreak:'break-all'}}>{inviteResult.tempPassword}</code>
+              <button onClick={()=>{navigator.clipboard.writeText(inviteResult.tempPassword);showToast('Copiado!');}} style={{padding:'6px 12px',background:'#00C89620',border:'1px solid #00C89640',borderRadius:6,color:'#00C896',fontSize:12,cursor:'pointer',fontFamily:'inherit',flexShrink:0}}>Copiar</button>
+            </div>
+          </div>
+          <p style={{fontSize:12,color:'#fbbf24',marginBottom:16}}>O colaborador deve trocar a senha no primeiro acesso.</p>
+          <div style={{display:'flex',justifyContent:'flex-end'}}>
+            <button onClick={()=>{setInviteModal(false);setInviteResult(null);}} style={bmS}>Fechar</button>
+          </div>
+        </>}
       </div></div>}
 
       {/* Pricing Tab Toggle */}

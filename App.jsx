@@ -1,6 +1,6 @@
 import { useState, useEffect, createContext, useContext } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
-import { onAuth, getPerms, getEffectivePerms, autoBackup } from './firebase.js';
+import { onAuth, getPerms, getEffectivePerms, autoBackup, checkPerm as _checkPerm } from './firebase.js';
 import Landing from './Landing.jsx';
 import Login from './Login.jsx';
 import Portal from './Portal.jsx';
@@ -14,11 +14,12 @@ import Dashboard from './Dashboard.jsx';
 export const AuthContext = createContext(null);
 export function useAuth() { return useContext(AuthContext); }
 
-function ProtectedRoute({ children, roles }) {
+function ProtectedRoute({ children, roles, requiredPerm }) {
   const { user, loading } = useAuth();
   if (loading) return <div style={{display:'flex',alignItems:'center',justifyContent:'center',height:'100vh',background:'#08090D',color:'#00C896',fontFamily:'Outfit',fontSize:18}}>Carregando...</div>;
   if (!user) return <Navigate to="/login" />;
-  if (roles && !roles.includes(user.role)) return <Navigate to="/login" />;
+  const roleOk = !roles || roles.includes(user.role);
+  if (!roleOk && (!requiredPerm || !_checkPerm(user, requiredPerm))) return <Navigate to="/login" />;
   return children;
 }
 
@@ -41,9 +42,10 @@ export default function App() {
   }, []);
 
   const perms = user ? getEffectivePerms(user.role, user.permissionOverrides) : {};
+  const checkPerm = (permKey) => _checkPerm(user, permKey);
 
   return (
-    <AuthContext.Provider value={{ user, setUser, loading, perms }}>
+    <AuthContext.Provider value={{ user, setUser, loading, perms, checkPerm }}>
       <Routes>
         <Route path="/" element={<Landing />} />
         <Route path="/login" element={<Login />} />
@@ -54,22 +56,22 @@ export default function App() {
           </ProtectedRoute>
         } />
         <Route path="/wms" element={
-          <ProtectedRoute roles={['diretor','comercial','logistica','financeiro']}>
+          <ProtectedRoute roles={['diretor','comercial','logistica','financeiro']} requiredPerm="wms.ver_estoque">
             <Wms />
           </ProtectedRoute>
         } />
         <Route path="/admin" element={
-          <ProtectedRoute roles={['diretor']}>
+          <ProtectedRoute roles={['diretor']} requiredPerm="admin.usuarios">
             <Admin />
           </ProtectedRoute>
         } />
         <Route path="/billing" element={
-          <ProtectedRoute roles={['diretor','comercial']}>
+          <ProtectedRoute roles={['diretor','comercial']} requiredPerm="billing.ver">
             <Billing />
           </ProtectedRoute>
         } />
         <Route path="/dashboard" element={
-          <ProtectedRoute roles={['diretor','comercial','financeiro']}>
+          <ProtectedRoute roles={['diretor','comercial','financeiro']} requiredPerm="dashboard.ver">
             <Dashboard />
           </ProtectedRoute>
         } />
