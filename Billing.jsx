@@ -97,6 +97,10 @@ export default function Billing() {
       const addLoja = (name) => { if (!name) return; const key = name.trim().toUpperCase(); if (!lojaMap[key]) lojaMap[key] = name.trim(); };
       Object.values(wms).forEach(c => addLoja(c.loja));
       allUsers.filter(u => u.loja && u.status === 'ativo').forEach(u => addLoja(u.loja));
+      try {
+        const cfgDoc = await getDoc(doc(db, 'wms', 'config'));
+        if (cfgDoc.exists() && Array.isArray(cfgDoc.data().lojas)) cfgDoc.data().lojas.forEach(addLoja);
+      } catch(e) {}
       const uniqueLojas = Object.values(lojaMap).sort();
       setClients(uniqueLojas);
       if (uniqueLojas.length > 0 && !selClient) setSelClient(uniqueLojas[0]);
