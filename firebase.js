@@ -276,7 +276,127 @@ export async function getPricing() {
 export async function savePricing(prices) {
   await setDoc(doc(db, 'config', 'pricing'), { ...prices, updatedAt: new Date().toISOString() });
 }
- 
+
+
+// ─── Operating costs per month (competência) ─────────────
+// Stored as custos_operacionais/{YYYY-MM}. Each doc holds an array of
+// items and a `fechado` flag. Editing one month NEVER touches another.
+//
+// Item shape: { id, nome, tipo: 'fixo'|'percentual', valor:Number }
+//   - tipo 'fixo':       valor is the amount in R$ (stored as a Number).
+//   - tipo 'percentual': valor is the percentage (e.g. 9). The R$ amount is
+//                        ALWAYS computed as revenue*(valor/100), never stored.
+
+const LEGACY_COST_LABELS = {
+  aluguel:   'Aluguel galpão',
+  caucao:    'Caução (oport.)',
+  folha:     'Folha pagamento',
+  etiquetas: 'Etiquetas/embalagens',
+  energia:   'Energia/utilidades',
+  outros:    'Outros fixos',
+};
+
+function _genId() {
+  return Date.now().toString(36) + Math.random().toString(36).substring(2, 6);
+}
+
+// Normalize a numeric input. Accepts Number or strings like
+// "1234,56", "1234.56" or "1.234,56" (pt-BR thousands). Returns a plain Number.
+export function parseNumberBR(v) {
+  if (typeof v === 'number') return isFinite(v) ? v : 0;
+  if (typeof v !== 'string') return 0;
+  let s = v.trim().replace(/\s/g, '').replace(/R\$/gi, '');
+  if (!s) return 0;
+  if (s.includes(',') && s.includes('.')) {
+    // "1.234,56" -> dot is thousands, comma is decimal
+    s = s.replace(/\./g, '').replace(',', '.');
+  } else if (s.includes(',')) {
+    // "1234,56" -> comma is decimal
+    s = s.replace(',', '.');
+  }
+  const n = parseFloat(s);
+  return isFinite(n) ? n : 0;
+}
+
+// R$ value of a single cost item given the month's revenue.
+export function resolveCostItemValue(item, revenue = 0) {
+  if (!item) return 0;
+  if (item.tipo === 'percentual') return (parseNumberBR(revenue)) * (parseNumberBR(item.valor) / 100);
+  return parseNumberBR(item.valor);
+}
+
+// Total cost of a month = fixed items (R$) + resolved percentual items.
+export function sumCostItems(itens, revenue = 0) {
+  return (itens || []).reduce((s, it) => s + resolveCostItemValue(it, revenue), 0);
+}
+
+function _legacyToItems(legacy) {
+  const items = [];
+  Object.entries(LEGACY_COST_LABELS).forEach(([key, label]) => {
+    if (legacy[key] != null && legacy[key] !== '') {
+      items.push({ id: key, nome: label, tipo: 'fixo', valor: parseNumberBR(legacy[key]) });
+    }
+  });
+  if (legacy.custom) {
+    try {
+      JSON.parse(legacy.custom).forEach(c => {
+        items.push({ id: c.id || _genId(), nome: c.nome || 'Custo', tipo: 'fixo', valor: parseNumberBR(c.valor) });
+      });
+    } catch (e) { /* ignore malformed legacy custom */ }
+  }
+  return items;
+}
+
+function _parseItens(data) {
+  try { return data.itens ? JSON.parse(data.itens) : []; } catch (e) { return []; }
+}
+
+function _prevMonthKey(month) {
+  const [y, m] = month.split('-').map(Number);
+  const d = new Date(y, m - 1, 1);
+  d.setMonth(d.getMonth() - 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+
+// Read a month's costs. Returns { exists, itens, fechado }.
+// One-time migration: opening 2026-07 with no doc yet seeds it from the
+// legacy single config/costs document (current state). No history is invented.
+export async function getMonthCosts(month) {
+  const ref = doc(db, 'custos_operacionais', month);
+  const snap = await getDoc(ref);
+  if (snap.exists()) {
+    const d = snap.data();
+    return { exists: true, itens: _parseItens(d), fechado: !!d.fechado };
+  }
+  if (month === '2026-07') {
+    const legacy = await getDoc(doc(db, 'config', 'costs')).catch(() => null);
+    if (legacy?.exists?.()) {
+      const itens = _legacyToItems(legacy.data());
+      await setDoc(ref, {
+        itens: JSON.stringify(itens), fechado: false, month,
+        migratedFrom: 'config/costs', updatedAt: new Date().toISOString(),
+      });
+      return { exists: true, itens, fechado: false };
+    }
+  }
+  return { exists: false, itens: [], fechado: false };
+}
+
+export async function saveMonthCosts(month, itens, fechado = false) {
+  await setDoc(doc(db, 'custos_operacionais', month), {
+    itens: JSON.stringify(itens || []),
+    fechado: !!fechado,
+    month,
+    updatedAt: new Date().toISOString(),
+  });
+}
+
+// Independent copy of the previous month's items (fresh ids, no reference).
+export async function copyCostsFromPreviousMonth(month) {
+  const prev = await getMonthCosts(_prevMonthKey(month));
+  return prev.itens.map(it => ({ ...it, id: _genId() }));
+}
+
  
 // ─── Auto Backup (runs daily for directors) ──────────
 export async function autoBackup() {

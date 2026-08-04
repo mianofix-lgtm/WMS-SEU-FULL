@@ -2,8 +2,11 @@ import { useState, useEffect, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from './App.jsx';
 import { LOGO_ICON } from './logo.js';
-import { db, getWmsData, getPricing } from './firebase.js';
+import { db, getWmsData, getPricing, getMonthCosts, saveMonthCosts, copyCostsFromPreviousMonth, sumCostItems, resolveCostItemValue, parseNumberBR, checkPerm } from './firebase.js';
 import { collection, getDocs, doc, getDoc, setDoc } from 'firebase/firestore';
+
+const fmtBRL = (n) => (Number(n) || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+const newId = () => Date.now().toString(36) + Math.random().toString(36).substring(2, 5);
 
 export default function Dashboard() {
   const { user } = useAuth();
@@ -14,38 +17,35 @@ export default function Dashboard() {
   const [coletaHistory, setColetaHistory] = useState([]);
   const [month, setMonth] = useState(() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`; });
 
-  // Costs (editable)
-  const [costs, setCosts] = useState({
-    aluguel: 65000, caucao: 2550, folha: 130000, etiquetas: 8000, energia: 5000, outros: 5000
-  });
+  // Operating costs — per competência (month), loaded from custos_operacionais/{YYYY-MM}
+  const [costItems, setCostItems] = useState([]);
+  const [costsFechado, setCostsFechado] = useState(false);
+  const [costDocExists, setCostDocExists] = useState(false);
+  const [loadingCosts, setLoadingCosts] = useState(false);
+  const [editingId, setEditingId] = useState(null);
+  const [editDraft, setEditDraft] = useState({ nome: '', tipo: 'fixo', valor: '' });
+  const [newCostDraft, setNewCostDraft] = useState({ nome: '', tipo: 'fixo', valor: '' });
 
-  const [showCostEditor, setShowCostEditor] = useState(false);
-  const [customCosts, setCustomCosts] = useState([]);
   const [insumos, setInsumos] = useState([]);
-  const [newCost, setNewCost] = useState({nome:'',valor:''});
-    const [savingCosts, setSavingCosts] = useState(false);
+
+  const canEditCosts = checkPerm(user, 'dashboard.editar_custos');
+  const isAdmin = user?.role === 'diretor';
 
   useEffect(() => { loadAll(); }, []);
-  useEffect(() => { loadInsumos(); }, [month]);
+  useEffect(() => { loadInsumos(); loadMonthCosts(); }, [month]);
 
   async function loadAll() {
     setLoading(true);
     try {
-      const [wms, pr, snap, coletaDoc, costsDoc] = await Promise.all([
+      const [wms, pr, snap, coletaDoc] = await Promise.all([
         getWmsData(),
         getPricing(),
         getDocs(collection(db, 'billing')),
         getDoc(doc(db, 'wms', 'coletas')).catch(()=>null),
-        getDoc(doc(db, 'config', 'costs')).catch(()=>null),
       ]);
       setWmsData(wms || {});
       setPricing(pr);
       if (coletaDoc?.exists?.() && coletaDoc.data().history) setColetaHistory(JSON.parse(coletaDoc.data().history));
-      if (costsDoc?.exists?.()) {
-        const cd = costsDoc.data();
-        setCosts(c => ({...c, ...cd}));
-        if (cd.custom) setCustomCosts(JSON.parse(cd.custom));
-      }
       const docs = [];
       snap.forEach(d => docs.push({id: d.id, ...d.data()}));
       setBillingDocs(docs);
@@ -61,29 +61,75 @@ export default function Dashboard() {
     } catch(e) { setInsumos([]); }
   }
 
-  async function saveCosts() {
-    setSavingCosts(true);
+  async function loadMonthCosts() {
+    setLoadingCosts(true);
+    setEditingId(null);
     try {
-      await setDoc(doc(db, 'config', 'costs'), { ...costs, custom: JSON.stringify(customCosts), updatedAt: new Date().toISOString() });
+      const res = await getMonthCosts(month);
+      setCostItems(res.itens);
+      setCostsFechado(res.fechado);
+      setCostDocExists(res.exists);
+    } catch(e) {
+      console.error(e);
+      setCostItems([]); setCostsFechado(false); setCostDocExists(false);
+    }
+    setLoadingCosts(false);
+  }
+
+  // Persist the current month's items. Never touches any other month.
+  async function persistItems(nextItems, fechadoVal = costsFechado) {
+    setCostItems(nextItems);
+    setCostDocExists(true);
+    try { await saveMonthCosts(month, nextItems, fechadoVal); }
+    catch(e) { console.error(e); }
+  }
+
+  function startEdit(item) {
+    if (costsFechado || !canEditCosts) return;
+    setEditingId(item.id);
+    setEditDraft({ nome: item.nome, tipo: item.tipo || 'fixo', valor: String(item.valor ?? '') });
+  }
+  function commitEdit() {
+    const next = costItems.map(it => it.id === editingId
+      ? { ...it, nome: editDraft.nome.trim() || it.nome, tipo: editDraft.tipo, valor: parseNumberBR(editDraft.valor) }
+      : it);
+    setEditingId(null);
+    persistItems(next);
+  }
+  function deleteItem(id) {
+    setEditingId(null);
+    persistItems(costItems.filter(it => it.id !== id));
+  }
+  function addItem() {
+    const nome = newCostDraft.nome.trim();
+    if (!nome) return;
+    const item = { id: newId(), nome, tipo: newCostDraft.tipo, valor: parseNumberBR(newCostDraft.valor) };
+    setNewCostDraft({ nome: '', tipo: 'fixo', valor: '' });
+    persistItems([...costItems, item]);
+  }
+  async function handleCopyPrev() {
+    setLoadingCosts(true);
+    try {
+      const itens = await copyCostsFromPreviousMonth(month);
+      setCostItems(itens);
+      setCostDocExists(true);
+      setCostsFechado(false);
+      await saveMonthCosts(month, itens, false);
     } catch(e) { console.error(e); }
-    setSavingCosts(false);
+    setLoadingCosts(false);
+  }
+  async function toggleFechado() {
+    const next = !costsFechado;
+    if (next && !canEditCosts) return;
+    if (!next && !isAdmin) return; // only admin reopens a closed month
+    setCostsFechado(next);
+    try { await saveMonthCosts(month, costItems, next); } catch(e) { console.error(e); }
   }
 
   async function saveInsumos(items) {
     try {
       await setDoc(doc(db, 'insumos', month), { items: JSON.stringify(items), month, updatedAt: new Date().toISOString() });
     } catch(e) { console.error(e); }
-  }
-
-  function addCustomCost() {
-    if (!newCost.nome) return;
-    const next = [...customCosts, {id: Date.now().toString(36), nome: newCost.nome, valor: parseFloat(newCost.valor)||0}];
-    setCustomCosts(next);
-    setNewCost({nome:'',valor:''});
-  }
-
-  function removeCustomCost(id) {
-    setCustomCosts(customCosts.filter(c => c.id !== id));
   }
 
   function addInsumo() {
@@ -168,13 +214,6 @@ export default function Dashboard() {
     const totalSalesRevenue = data.totalSales;
     const totalRevenue = totalPalletRevenue + totalWmsRevenue + totalSalesRevenue;
 
-    const baseCosts = Object.values(costs).reduce((s,v) => s + (typeof v === 'number' || typeof v === 'string' ? parseFloat(v)||0 : 0), 0);
-    const customTotal = customCosts.reduce((s,c) => s + (parseFloat(c.valor)||0), 0);
-    const insumosTotal = insumos.reduce((s,i) => s + ((parseFloat(i.precoUnit)||0) * (parseFloat(i.usado)||0)), 0);
-    const totalCosts = baseCosts + customTotal + insumosTotal;
-    const profit = totalRevenue - totalCosts;
-    const margin = totalRevenue > 0 ? (profit / totalRevenue * 100) : 0;
-
     return {
       clients: clientBreakdown,
       totalClients,
@@ -183,12 +222,22 @@ export default function Dashboard() {
       totalWmsRevenue,
       totalSalesRevenue,
       totalRevenue,
-      totalCosts,
-      profit,
-      margin,
       salesCount: data.totalSalesCount,
     };
-  }, [billingByMonth, month, wmsData, pricing, costs]);
+  }, [billingByMonth, month, wmsData, pricing]);
+
+  // ─── Costs / result / margin derive from the SELECTED month's items ───
+  // Percentual items resolve against the month's total revenue, so any
+  // revenue change cascades to total cost, result and margin in real time.
+  const totalRevenue = currentMonth.totalRevenue;
+  const insumosTotal = useMemo(
+    () => insumos.reduce((s,i) => s + ((parseFloat(i.precoUnit)||0) * (parseFloat(i.usado)||0)), 0),
+    [insumos]
+  );
+  const costItemsTotal = useMemo(() => sumCostItems(costItems, totalRevenue), [costItems, totalRevenue]);
+  const totalCosts = costItemsTotal + insumosTotal;
+  const profit = totalRevenue - totalCosts;
+  const margin = totalRevenue > 0 ? (profit / totalRevenue * 100) : 0;
 
   // Monthly trend (last 6 months)
   const trend = useMemo(() => {
@@ -261,15 +310,15 @@ export default function Dashboard() {
           </div>
           <div style={{...S.kpi,borderColor:'#dc262640'}}>
             <div style={S.kpiL}>Custos</div>
-            <div style={{fontSize:28,fontWeight:900,color:'#dc2626',marginTop:4}}>R$ {currentMonth.totalCosts.toLocaleString('pt-BR',{minimumFractionDigits:0})}</div>
+            <div style={{fontSize:28,fontWeight:900,color:'#dc2626',marginTop:4}}>{fmtBRL(totalCosts)}</div>
           </div>
-          <div style={{...S.kpi,borderColor:currentMonth.profit>=0?'#00C89640':'#dc262640'}}>
+          <div style={{...S.kpi,borderColor:profit>=0?'#00C89640':'#dc262640'}}>
             <div style={S.kpiL}>Resultado</div>
-            <div style={{fontSize:28,fontWeight:900,color:currentMonth.profit>=0?'#00C896':'#dc2626',marginTop:4}}>R$ {currentMonth.profit.toLocaleString('pt-BR',{minimumFractionDigits:0})}</div>
+            <div style={{fontSize:28,fontWeight:900,color:profit>=0?'#00C896':'#dc2626',marginTop:4}}>{fmtBRL(profit)}</div>
           </div>
           <div style={S.kpi}>
             <div style={S.kpiL}>Margem</div>
-            <div style={{fontSize:28,fontWeight:900,color:currentMonth.margin>=20?'#00C896':currentMonth.margin>=0?'#fbbf24':'#dc2626',marginTop:4}}>{currentMonth.margin.toFixed(1)}%</div>
+            <div style={{fontSize:28,fontWeight:900,color:margin>=20?'#00C896':margin>=0?'#fbbf24':'#dc2626',marginTop:4}}>{margin.toFixed(1)}%</div>
           </div>
         </div>
 
@@ -324,64 +373,97 @@ export default function Dashboard() {
             </div>
           </div>
 
-          {/* Costs breakdown - EDITABLE */}
+          {/* Costs breakdown — per competência, inline-editable */}
           <div style={S.card}>
-            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:4}}>
               <h3 style={{fontSize:15,fontWeight:700}}>Custos Operacionais</h3>
-              <button onClick={()=>setShowCostEditor(!showCostEditor)} style={{padding:'4px 12px',background:'#161820',border:'1px solid #1E2028',borderRadius:4,color:'#8B8D97',fontSize:11,cursor:'pointer',fontFamily:'inherit'}}>{showCostEditor?'Fechar':'Editar'}</button>
+              {costsFechado
+                ? (<span style={{display:'flex',alignItems:'center',gap:8}}>
+                    <span style={{fontSize:11,fontWeight:700,color:'#fbbf24',background:'#fbbf2418',border:'1px solid #fbbf2440',borderRadius:4,padding:'3px 8px'}}>🔒 Mês fechado</span>
+                    {isAdmin && <button onClick={toggleFechado} style={{padding:'4px 10px',background:'#161820',border:'1px solid #1E2028',borderRadius:4,color:'#8B8D97',fontSize:11,cursor:'pointer',fontFamily:'inherit'}}>Reabrir</button>}
+                   </span>)
+                : (canEditCosts && costDocExists && <button onClick={toggleFechado} style={{padding:'4px 10px',background:'#161820',border:'1px solid #1E2028',borderRadius:4,color:'#8B8D97',fontSize:11,cursor:'pointer',fontFamily:'inherit'}}>Fechar mês</button>)}
             </div>
-            {[
-              ['Aluguel galpão','aluguel'],
-              ['Caução (oport.)','caucao'],
-              ['Folha pagamento','folha'],
-              ['Etiquetas/embalagens','etiquetas'],
-              ['Energia/utilidades','energia'],
-              ['Outros fixos','outros'],
-            ].map(([label,key]) => (
-              <div key={key} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'6px 0',borderBottom:'1px solid #1E2028'}}>
-                <span style={{fontSize:13,color:'#C0C2CC'}}>{label}</span>
-                {showCostEditor ? (
-                  <input type="number" value={costs[key]||''} onChange={e=>setCosts(p=>({...p,[key]:e.target.value}))} style={{width:110,padding:'4px 8px',background:'#161820',border:'1px solid #1E2028',borderRadius:4,color:'#dc2626',fontSize:14,fontWeight:700,textAlign:'right',fontFamily:'inherit',outline:'none'}} />
-                ) : (
-                  <span style={{fontSize:14,fontWeight:700,color:'#dc2626'}}>R$ {(parseFloat(costs[key])||0).toLocaleString('pt-BR',{minimumFractionDigits:0})}</span>
+            <p style={{fontSize:11,color:'#8B8D97',marginBottom:12}}>{new Date(month+'-15').toLocaleDateString('pt-BR',{month:'long',year:'numeric'})}</p>
+
+            {loadingCosts ? (
+              <div style={{padding:'20px 0',textAlign:'center',color:'#8B8D97',fontSize:13}}>Carregando custos...</div>
+            ) : (!costDocExists && costItems.length === 0) ? (
+              <div style={{padding:'16px 0',textAlign:'center'}}>
+                <div style={{fontSize:13,color:'#8B8D97',marginBottom:12}}>Nenhum custo cadastrado para este mês.</div>
+                {canEditCosts && (
+                  <button onClick={handleCopyPrev} style={{padding:'8px 16px',background:'#1e3a5f',border:'1px solid #3b82f640',borderRadius:6,color:'#93c5fd',fontSize:12,fontWeight:600,cursor:'pointer',fontFamily:'inherit'}}>📋 Copiar custos do mês anterior</button>
                 )}
               </div>
-            ))}
-            {/* Custom costs */}
-            {customCosts.map(cc => (
-              <div key={cc.id} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'6px 0',borderBottom:'1px solid #1E2028'}}>
-                <span style={{fontSize:13,color:'#f97316'}}>{cc.nome}</span>
-                <div style={{display:'flex',gap:6,alignItems:'center'}}>
-                  {showCostEditor ? (
-                    <>
-                      <input type="number" value={cc.valor} onChange={e=>{const next=customCosts.map(c=>c.id===cc.id?{...c,valor:e.target.value}:c);setCustomCosts(next);}} style={{width:100,padding:'4px 8px',background:'#161820',border:'1px solid #1E2028',borderRadius:4,color:'#f97316',fontSize:14,fontWeight:700,textAlign:'right',fontFamily:'inherit',outline:'none'}} />
-                      <button onClick={()=>removeCustomCost(cc.id)} style={{background:'none',border:'none',color:'#dc2626',cursor:'pointer',fontSize:14}}>✕</button>
-                    </>
-                  ) : (
-                    <span style={{fontSize:14,fontWeight:700,color:'#f97316'}}>R$ {(parseFloat(cc.valor)||0).toLocaleString('pt-BR',{minimumFractionDigits:0})}</span>
-                  )}
-                </div>
-              </div>
-            ))}
-            {/* Insumos total */}
-            {insumos.length > 0 && (
-              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'6px 0',borderBottom:'1px solid #1E2028'}}>
-                <span style={{fontSize:13,color:'#7c3aed'}}>Insumos ({insumos.length} itens)</span>
-                <span style={{fontSize:14,fontWeight:700,color:'#7c3aed'}}>R$ {insumos.reduce((s,i)=>(s+(parseFloat(i.precoUnit)||0)*(parseFloat(i.usado)||0)),0).toLocaleString('pt-BR',{minimumFractionDigits:0})}</span>
-              </div>
+            ) : (
+              <>
+                {costItems.map(item => {
+                  const isPct = item.tipo === 'percentual';
+                  const resolved = resolveCostItemValue(item, totalRevenue);
+                  const color = isPct ? '#f97316' : '#dc2626';
+                  if (editingId === item.id) {
+                    return (
+                      <div key={item.id} style={{display:'flex',gap:6,alignItems:'center',padding:'6px 0',borderBottom:'1px solid #1E2028'}}>
+                        <input autoFocus value={editDraft.nome} onChange={e=>setEditDraft(d=>({...d,nome:e.target.value}))} onKeyDown={e=>{if(e.key==='Enter')commitEdit();if(e.key==='Escape')setEditingId(null);}} style={{flex:1,minWidth:0,padding:'4px 8px',background:'#161820',border:'1px solid #1E2028',borderRadius:4,color:'#fff',fontSize:12,fontFamily:'inherit',outline:'none'}} />
+                        <select value={editDraft.tipo} onChange={e=>setEditDraft(d=>({...d,tipo:e.target.value}))} style={{padding:'4px 4px',background:'#161820',border:'1px solid #1E2028',borderRadius:4,color:'#C0C2CC',fontSize:11,fontFamily:'inherit',outline:'none'}}>
+                          <option value="fixo">R$</option>
+                          <option value="percentual">%</option>
+                        </select>
+                        <input value={editDraft.valor} onChange={e=>setEditDraft(d=>({...d,valor:e.target.value}))} onKeyDown={e=>{if(e.key==='Enter')commitEdit();if(e.key==='Escape')setEditingId(null);}} placeholder={editDraft.tipo==='percentual'?'%':'R$'} style={{width:76,padding:'4px 8px',background:'#161820',border:'1px solid #1E2028',borderRadius:4,color:color,fontSize:13,fontWeight:700,textAlign:'right',fontFamily:'inherit',outline:'none'}} />
+                        <button title="Salvar" onClick={commitEdit} style={{background:'none',border:'none',color:'#00C896',cursor:'pointer',fontSize:15}}>✓</button>
+                        <button title="Cancelar" onClick={()=>setEditingId(null)} style={{background:'none',border:'none',color:'#8B8D97',cursor:'pointer',fontSize:14}}>✕</button>
+                        <button title="Excluir" onClick={()=>deleteItem(item.id)} style={{background:'none',border:'none',color:'#dc2626',cursor:'pointer',fontSize:14}}>🗑</button>
+                      </div>
+                    );
+                  }
+                  return (
+                    <div key={item.id} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'6px 0',borderBottom:'1px solid #1E2028'}}>
+                      <span style={{fontSize:13,color:'#C0C2CC'}}>{item.nome}</span>
+                      <div style={{display:'flex',gap:8,alignItems:'center'}}>
+                        <span
+                          onClick={()=>startEdit(item)}
+                          style={{fontSize:14,fontWeight:700,color,cursor:(canEditCosts&&!costsFechado)?'pointer':'default'}}
+                          title={isPct?`${parseNumberBR(item.valor).toLocaleString('pt-BR')}% da receita`:''}
+                        >
+                          {isPct
+                            ? `${parseNumberBR(item.valor).toLocaleString('pt-BR')}% (${fmtBRL(resolved)})`
+                            : fmtBRL(resolved)}
+                        </span>
+                        {canEditCosts && !costsFechado && (
+                          <button title="Editar" onClick={()=>startEdit(item)} style={{background:'none',border:'none',color:'#8B8D97',cursor:'pointer',fontSize:12,padding:0}}>✎</button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+
+                {/* Insumos (read-only, computed from WMS) */}
+                {insumos.length > 0 && (
+                  <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'6px 0',borderBottom:'1px solid #1E2028'}}>
+                    <span style={{fontSize:13,color:'#7c3aed'}}>Insumos ({insumos.length} itens)</span>
+                    <span style={{fontSize:14,fontWeight:700,color:'#7c3aed'}}>{fmtBRL(insumosTotal)}</span>
+                  </div>
+                )}
+
+                {/* Add new item */}
+                {canEditCosts && !costsFechado && (
+                  <div style={{marginTop:8,display:'flex',gap:6}}>
+                    <input value={newCostDraft.nome} onChange={e=>setNewCostDraft(p=>({...p,nome:e.target.value}))} onKeyDown={e=>{if(e.key==='Enter')addItem();}} placeholder="Nome do custo" style={{flex:1,minWidth:0,padding:'6px 10px',background:'#161820',border:'1px solid #1E2028',borderRadius:4,color:'#fff',fontSize:12,fontFamily:'inherit',outline:'none'}} />
+                    <select value={newCostDraft.tipo} onChange={e=>setNewCostDraft(p=>({...p,tipo:e.target.value}))} style={{padding:'6px 4px',background:'#161820',border:'1px solid #1E2028',borderRadius:4,color:'#C0C2CC',fontSize:11,fontFamily:'inherit',outline:'none'}}>
+                      <option value="fixo">R$</option>
+                      <option value="percentual">%</option>
+                    </select>
+                    <input value={newCostDraft.valor} onChange={e=>setNewCostDraft(p=>({...p,valor:e.target.value}))} onKeyDown={e=>{if(e.key==='Enter')addItem();}} placeholder={newCostDraft.tipo==='percentual'?'%':'Valor'} style={{width:80,padding:'6px 10px',background:'#161820',border:'1px solid #1E2028',borderRadius:4,color:'#fff',fontSize:12,fontFamily:'inherit',outline:'none',textAlign:'right'}} />
+                    <button onClick={addItem} style={{padding:'6px 12px',background:'#1e3a5f',border:'none',borderRadius:4,color:'#93c5fd',fontSize:11,cursor:'pointer',fontFamily:'inherit',fontWeight:600}}>+</button>
+                  </div>
+                )}
+              </>
             )}
-            {showCostEditor && (
-              <div style={{marginTop:8,display:'flex',gap:6}}>
-                <input value={newCost.nome} onChange={e=>setNewCost(p=>({...p,nome:e.target.value}))} placeholder="Nome do custo" style={{flex:1,padding:'6px 10px',background:'#161820',border:'1px solid #1E2028',borderRadius:4,color:'#fff',fontSize:12,fontFamily:'inherit',outline:'none'}} />
-                <input type="number" value={newCost.valor} onChange={e=>setNewCost(p=>({...p,valor:e.target.value}))} placeholder="Valor" style={{width:90,padding:'6px 10px',background:'#161820',border:'1px solid #1E2028',borderRadius:4,color:'#fff',fontSize:12,fontFamily:'inherit',outline:'none',textAlign:'right'}} />
-                <button onClick={addCustomCost} style={{padding:'6px 12px',background:'#1e3a5f',border:'none',borderRadius:4,color:'#93c5fd',fontSize:11,cursor:'pointer',fontFamily:'inherit',fontWeight:600}}>+</button>
-              </div>
-            )}
+
             <div style={{display:'flex',justifyContent:'space-between',padding:'10px 0',marginTop:4}}>
               <span style={{fontSize:14,fontWeight:800}}>Total</span>
-              <span style={{fontSize:18,fontWeight:900,color:'#dc2626'}}>R$ {currentMonth.totalCosts.toLocaleString('pt-BR',{minimumFractionDigits:0})}</span>
+              <span style={{fontSize:18,fontWeight:900,color:'#dc2626'}}>{fmtBRL(totalCosts)}</span>
             </div>
-            {showCostEditor && <button onClick={saveCosts} disabled={savingCosts} style={{width:'100%',padding:'8px',background:'#00C896',color:'#2E2C3A',border:'none',borderRadius:6,fontWeight:700,cursor:'pointer',fontFamily:'inherit',fontSize:12,marginTop:4}}>{savingCosts?'Salvando...':'Salvar Custos'}</button>}
           </div>
         </div>
 
