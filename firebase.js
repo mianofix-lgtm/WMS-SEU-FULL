@@ -287,6 +287,13 @@ export async function savePricing(prices) {
 //   - tipo 'percentual': valor is the percentage (e.g. 9). The R$ amount is
 //                        ALWAYS computed as revenue*(valor/100), never stored.
 
+// Where costs lived before the per-month split: a single config/costs document
+// holding the six fixed fields below plus `custom` (a JSON string array of
+// { id, nome, valor }). It is READ ONLY here — never written, never deleted.
+const LEGACY_COST_COLLECTION = 'config';
+const LEGACY_COST_DOC = 'costs';
+const LEGACY_MIGRATION_MONTH = '2026-07'; // competência that inherits the legacy snapshot
+
 const LEGACY_COST_LABELS = {
   aluguel:   'Aluguel galpão',
   caucao:    'Caução (oport.)',
@@ -295,6 +302,12 @@ const LEGACY_COST_LABELS = {
   energia:   'Energia/utilidades',
   outros:    'Outros fixos',
 };
+
+// Legacy fields that are metadata, not costs.
+const LEGACY_META_FIELDS = new Set([
+  'custom', 'updatedAt', 'createdAt', 'month', 'itens', 'fechado',
+  'migratedFrom', 'migrationDone',
+]);
 
 function _genId() {
   return Date.now().toString(36) + Math.random().toString(36).substring(2, 6);
@@ -330,25 +343,96 @@ export function sumCostItems(itens, revenue = 0) {
   return (itens || []).reduce((s, it) => s + resolveCostItemValue(it, revenue), 0);
 }
 
+// Force an item into the canonical shape. `valor` is ALWAYS a plain Number.
+function _normalizeItem(item) {
+  if (!item || typeof item !== 'object') return null;
+  return {
+    id: item.id != null && item.id !== '' ? String(item.id) : _genId(),
+    nome: String(item.nome ?? item.name ?? 'Custo'),
+    tipo: item.tipo === 'percentual' ? 'percentual' : 'fixo',
+    valor: parseNumberBR(item.valor ?? item.value),
+  };
+}
+
+function _isNumericLike(v) {
+  if (typeof v === 'number') return isFinite(v);
+  if (typeof v !== 'string') return false;
+  const s = v.trim();
+  return !!s && /^-?\s*(R\$)?\s*[\d.,]+$/i.test(s);
+}
+
+function _prettyLabel(key) {
+  const s = String(key).replace(/[_-]+/g, ' ').trim();
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+// Convert the legacy config/costs document into canonical items.
+// Ids are DETERMINISTIC (derived from the legacy key) so re-running the
+// migration produces the same ids and merging by id can never duplicate.
 function _legacyToItems(legacy) {
   const items = [];
+  const seen = new Set();
+  const push = (id, nome, valor, tipo = 'fixo') => {
+    if (seen.has(id)) return;
+    seen.add(id);
+    items.push(_normalizeItem({ id, nome, tipo, valor }));
+  };
+
+  // 1) the six known fixed fields, in their canonical order and labels
   Object.entries(LEGACY_COST_LABELS).forEach(([key, label]) => {
-    if (legacy[key] != null && legacy[key] !== '') {
-      items.push({ id: key, nome: label, tipo: 'fixo', valor: parseNumberBR(legacy[key]) });
-    }
+    if (legacy[key] != null && legacy[key] !== '') push(key, label, legacy[key]);
   });
-  if (legacy.custom) {
-    try {
-      JSON.parse(legacy.custom).forEach(c => {
-        items.push({ id: c.id || _genId(), nome: c.nome || 'Custo', tipo: 'fixo', valor: parseNumberBR(c.valor) });
-      });
-    } catch (e) { /* ignore malformed legacy custom */ }
+
+  // 2) any other numeric field the old editor may have written — keep it
+  //    instead of silently dropping it
+  Object.entries(legacy).forEach(([key, v]) => {
+    if (LEGACY_META_FIELDS.has(key) || LEGACY_COST_LABELS[key]) return;
+    if (!_isNumericLike(v)) return;
+    push(key, _prettyLabel(key), v);
+  });
+
+  // 3) the custom list (JSON string in the legacy doc; tolerate a real array)
+  let custom = legacy.custom;
+  if (typeof custom === 'string') {
+    try { custom = JSON.parse(custom); } catch (e) { custom = null; }
+  }
+  if (Array.isArray(custom)) {
+    custom.forEach((c, i) => {
+      if (!c || typeof c !== 'object') return;
+      push(`custom_${c.id != null && c.id !== '' ? c.id : i}`,
+           c.nome || c.name || `Custo ${i + 1}`,
+           c.valor ?? c.value,
+           c.tipo === 'percentual' ? 'percentual' : 'fixo');
+    });
   }
   return items;
 }
 
+async function _readLegacyCostItems() {
+  try {
+    const snap = await getDoc(doc(db, LEGACY_COST_COLLECTION, LEGACY_COST_DOC));
+    if (!snap.exists()) return [];
+    return _legacyToItems(snap.data());
+  } catch (e) {
+    console.error(`[custos] falha ao ler o documento legado ${LEGACY_COST_COLLECTION}/${LEGACY_COST_DOC}`, e);
+    return [];
+  }
+}
+
+// Accepts the stored JSON string or an already-decoded array.
 function _parseItens(data) {
-  try { return data.itens ? JSON.parse(data.itens) : []; } catch (e) { return []; }
+  const raw = data?.itens;
+  const arr = Array.isArray(raw)
+    ? raw
+    : (typeof raw === 'string' && raw.trim() ? (() => { try { return JSON.parse(raw); } catch (e) { return []; } })() : []);
+  return (Array.isArray(arr) ? arr : []).map(_normalizeItem).filter(Boolean);
+}
+
+// Union by id — existing items win, legacy items only fill gaps.
+function _mergeById(current, incoming) {
+  const byId = new Map(current.map(it => [it.id, it]));
+  incoming.forEach(it => { if (!byId.has(it.id)) byId.set(it.id, it); });
+  return [...byId.values()];
 }
 
 function _prevMonthKey(month) {
@@ -358,37 +442,72 @@ function _prevMonthKey(month) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 }
 
-// Read a month's costs. Returns { exists, itens, fechado }.
-// One-time migration: opening 2026-07 with no doc yet seeds it from the
-// legacy single config/costs document (current state). No history is invented.
+// Read a month's costs. Returns { exists, itens, fechado, error }.
+// Never throws: a failed read degrades to an empty month plus an `error`
+// message the UI can surface, instead of blanking out silently.
+//
+// Migration: the competência LEGACY_MIGRATION_MONTH inherits the legacy
+// config/costs snapshot. It runs whenever that month has NO items yet — so a
+// previous half-failed attempt (missing doc, or a doc written empty) repairs
+// itself on the next read. Ids are deterministic and items merge by id, so
+// running it again never duplicates. `migrationDone` marks the doc as
+// user-owned: once anyone saves that month, the legacy doc is never re-read.
 export async function getMonthCosts(month) {
   const ref = doc(db, 'custos_operacionais', month);
-  const snap = await getDoc(ref);
-  if (snap.exists()) {
-    const d = snap.data();
-    return { exists: true, itens: _parseItens(d), fechado: !!d.fechado };
+  let data = null;
+  let error = null;
+  try {
+    const snap = await getDoc(ref);
+    data = snap.exists() ? snap.data() : null;
+  } catch (e) {
+    console.error(`[custos] leitura de custos_operacionais/${month} falhou`, e);
+    error = `Não foi possível ler custos_operacionais/${month} (${e?.code || e?.message || 'erro'}). Verifique as regras do Firestore.`;
   }
-  if (month === '2026-07') {
-    const legacy = await getDoc(doc(db, 'config', 'costs')).catch(() => null);
-    if (legacy?.exists?.()) {
-      const itens = _legacyToItems(legacy.data());
-      await setDoc(ref, {
-        itens: JSON.stringify(itens), fechado: false, month,
-        migratedFrom: 'config/costs', updatedAt: new Date().toISOString(),
-      });
-      return { exists: true, itens, fechado: false };
+
+  const itens = _parseItens(data);
+  const fechado = !!data?.fechado;
+
+  // Stored data always wins — never seed on top of real items.
+  if (itens.length) return { exists: true, itens, fechado, error: null };
+
+  if (month === LEGACY_MIGRATION_MONTH && !data?.migrationDone) {
+    const legacyItems = await _readLegacyCostItems();
+    if (legacyItems.length) {
+      const merged = _mergeById(itens, legacyItems);
+      try {
+        await setDoc(ref, {
+          itens: JSON.stringify(merged),
+          fechado,
+          month,
+          migratedFrom: `${LEGACY_COST_COLLECTION}/${LEGACY_COST_DOC}`,
+          migrationDone: true,
+          updatedAt: new Date().toISOString(),
+        });
+        return { exists: true, itens: merged, fechado, error: null };
+      } catch (e) {
+        console.error(`[custos] migração não conseguiu gravar custos_operacionais/${month}`, e);
+        // Show the legacy numbers anyway; the write retries on the next read.
+        return {
+          exists: false, itens: merged, fechado,
+          error: `Migração leu ${legacyItems.length} custos do legado mas não conseguiu gravar em custos_operacionais/${month} (${e?.code || e?.message || 'erro'}). Verifique as regras do Firestore.`,
+        };
+      }
     }
   }
-  return { exists: false, itens: [], fechado: false };
+
+  return { exists: !!data, itens, fechado, error };
 }
 
 export async function saveMonthCosts(month, itens, fechado = false) {
+  const norm = (itens || []).map(_normalizeItem).filter(Boolean);
   await setDoc(doc(db, 'custos_operacionais', month), {
-    itens: JSON.stringify(itens || []),
+    itens: JSON.stringify(norm),
     fechado: !!fechado,
     month,
+    migrationDone: true, // user-owned from now on: never re-seed from the legacy doc
     updatedAt: new Date().toISOString(),
   });
+  return norm;
 }
 
 // Independent copy of the previous month's items (fresh ids, no reference).

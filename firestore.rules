@@ -65,5 +65,13 @@ service cloud.firestore {
       allow read: if isAuth();
       allow write: if isAuth() && isInternal();
     }
+
+    // Custos operacionais por competência (custos_operacionais/{YYYY-MM})
+    // Same audience as the old config/costs document: internal reads,
+    // director/financeiro writes.
+    match /custos_operacionais/{docId} {
+      allow read: if isAuth() && isInternal();
+      allow write: if isAuth() && getUserRole() in ['diretor', 'financeiro'];
+    }
   }
 }

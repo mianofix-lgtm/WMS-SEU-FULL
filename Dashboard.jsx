@@ -20,7 +20,7 @@ export default function Dashboard() {
   // Operating costs — per competência (month), loaded from custos_operacionais/{YYYY-MM}
   const [costItems, setCostItems] = useState([]);
   const [costsFechado, setCostsFechado] = useState(false);
-  const [costDocExists, setCostDocExists] = useState(false);
+  const [costsError, setCostsError] = useState(null);
   const [loadingCosts, setLoadingCosts] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [editDraft, setEditDraft] = useState({ nome: '', tipo: 'fixo', valor: '' });
@@ -68,10 +68,11 @@ export default function Dashboard() {
       const res = await getMonthCosts(month);
       setCostItems(res.itens);
       setCostsFechado(res.fechado);
-      setCostDocExists(res.exists);
+      setCostsError(res.error || null);
     } catch(e) {
       console.error(e);
-      setCostItems([]); setCostsFechado(false); setCostDocExists(false);
+      setCostItems([]); setCostsFechado(false);
+      setCostsError(e?.code || e?.message || 'Erro ao carregar os custos do mês.');
     }
     setLoadingCosts(false);
   }
@@ -79,9 +80,13 @@ export default function Dashboard() {
   // Persist the current month's items. Never touches any other month.
   async function persistItems(nextItems, fechadoVal = costsFechado) {
     setCostItems(nextItems);
-    setCostDocExists(true);
-    try { await saveMonthCosts(month, nextItems, fechadoVal); }
-    catch(e) { console.error(e); }
+    try {
+      await saveMonthCosts(month, nextItems, fechadoVal);
+      setCostsError(null);
+    } catch(e) {
+      console.error(e);
+      setCostsError(`Não foi possível salvar os custos (${e?.code || e?.message || 'erro'}).`);
+    }
   }
 
   function startEdit(item) {
@@ -112,10 +117,13 @@ export default function Dashboard() {
     try {
       const itens = await copyCostsFromPreviousMonth(month);
       setCostItems(itens);
-      setCostDocExists(true);
       setCostsFechado(false);
-      await saveMonthCosts(month, itens, false);
-    } catch(e) { console.error(e); }
+      if (itens.length) { await saveMonthCosts(month, itens, false); setCostsError(null); }
+      else setCostsError('O mês anterior também não tem custos cadastrados.');
+    } catch(e) {
+      console.error(e);
+      setCostsError(`Não foi possível copiar do mês anterior (${e?.code || e?.message || 'erro'}).`);
+    }
     setLoadingCosts(false);
   }
   async function toggleFechado() {
@@ -123,7 +131,12 @@ export default function Dashboard() {
     if (next && !canEditCosts) return;
     if (!next && !isAdmin) return; // only admin reopens a closed month
     setCostsFechado(next);
-    try { await saveMonthCosts(month, costItems, next); } catch(e) { console.error(e); }
+    try { await saveMonthCosts(month, costItems, next); setCostsError(null); }
+    catch(e) {
+      console.error(e);
+      setCostsFechado(!next);
+      setCostsError(`Não foi possível ${next?'fechar':'reabrir'} o mês (${e?.code || e?.message || 'erro'}).`);
+    }
   }
 
   async function saveInsumos(items) {
@@ -382,21 +395,27 @@ export default function Dashboard() {
                     <span style={{fontSize:11,fontWeight:700,color:'#fbbf24',background:'#fbbf2418',border:'1px solid #fbbf2440',borderRadius:4,padding:'3px 8px'}}>🔒 Mês fechado</span>
                     {isAdmin && <button onClick={toggleFechado} style={{padding:'4px 10px',background:'#161820',border:'1px solid #1E2028',borderRadius:4,color:'#8B8D97',fontSize:11,cursor:'pointer',fontFamily:'inherit'}}>Reabrir</button>}
                    </span>)
-                : (canEditCosts && costDocExists && <button onClick={toggleFechado} style={{padding:'4px 10px',background:'#161820',border:'1px solid #1E2028',borderRadius:4,color:'#8B8D97',fontSize:11,cursor:'pointer',fontFamily:'inherit'}}>Fechar mês</button>)}
+                : (canEditCosts && costItems.length > 0 && <button onClick={toggleFechado} style={{padding:'4px 10px',background:'#161820',border:'1px solid #1E2028',borderRadius:4,color:'#8B8D97',fontSize:11,cursor:'pointer',fontFamily:'inherit'}}>Fechar mês</button>)}
             </div>
             <p style={{fontSize:11,color:'#8B8D97',marginBottom:12}}>{new Date(month+'-15').toLocaleDateString('pt-BR',{month:'long',year:'numeric'})}</p>
 
+            {costsError && (
+              <div style={{marginBottom:12,padding:'8px 10px',background:'#dc262618',border:'1px solid #dc262640',borderRadius:6,color:'#fca5a5',fontSize:11,lineHeight:1.5}}>⚠️ {costsError}</div>
+            )}
+
             {loadingCosts ? (
               <div style={{padding:'20px 0',textAlign:'center',color:'#8B8D97',fontSize:13}}>Carregando custos...</div>
-            ) : (!costDocExists && costItems.length === 0) ? (
-              <div style={{padding:'16px 0',textAlign:'center'}}>
-                <div style={{fontSize:13,color:'#8B8D97',marginBottom:12}}>Nenhum custo cadastrado para este mês.</div>
-                {canEditCosts && (
-                  <button onClick={handleCopyPrev} style={{padding:'8px 16px',background:'#1e3a5f',border:'1px solid #3b82f640',borderRadius:6,color:'#93c5fd',fontSize:12,fontWeight:600,cursor:'pointer',fontFamily:'inherit'}}>📋 Copiar custos do mês anterior</button>
-                )}
-              </div>
             ) : (
               <>
+                {/* Empty month: keep the editor available so costs can be created from scratch */}
+                {costItems.length === 0 && (
+                  <div style={{padding:'12px 0',textAlign:'center'}}>
+                    <div style={{fontSize:13,color:'#8B8D97',marginBottom:12}}>Nenhum custo cadastrado para este mês.</div>
+                    {canEditCosts && !costsFechado && (
+                      <button onClick={handleCopyPrev} style={{padding:'8px 16px',background:'#1e3a5f',border:'1px solid #3b82f640',borderRadius:6,color:'#93c5fd',fontSize:12,fontWeight:600,cursor:'pointer',fontFamily:'inherit'}}>📋 Copiar custos do mês anterior</button>
+                    )}
+                  </div>
+                )}
                 {costItems.map(item => {
                   const isPct = item.tipo === 'percentual';
                   const resolved = resolveCostItemValue(item, totalRevenue);
