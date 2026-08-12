@@ -1,7 +1,7 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from './App.jsx';
-import { db, getWmsData, getPricing, DEFAULT_PRICES, logAction } from './firebase.js';
+import { db, getWmsData, getPricing, DEFAULT_PRICES, logAction, getManualBilling, saveManualBilling, parseNumberBR } from './firebase.js';
 import { LOGO_ICON, LOGO_WORDMARK } from './logo.js';
 import { doc, getDoc, setDoc, collection, getDocs } from 'firebase/firestore';
 
@@ -51,8 +51,64 @@ function canalColor(canal) {
   return {bg:'#8B8D9720',c:'#C0C2CC'};
 }
 
+const money = (v) => 'R$ ' + (Number(v) || 0).toLocaleString('pt-BR', {minimumFractionDigits:2});
+
+// Manually-entered monthly values, per client + competência.
+const MANUAL_LABELS = {
+  wms_portal:  'WMS + Portal',
+  armazenagem: 'Armazenagem',
+  frete:       'Frete',
+};
+
+// Inline editor for a manually-entered R$ value. Accepts "1234,56" or
+// "1234.56"; the parent normalizes to Number before saving.
+function ManualValue({ value, editing, canEdit, saving, onStart, onCancel, onSave, big }) {
+  const [draft, setDraft] = useState('');
+
+  useEffect(() => {
+    if (editing) setDraft(value ? String(value).replace('.', ',') : '');
+  }, [editing]);
+
+  const valStyle = big
+    ? {fontSize:22, fontWeight:900, marginTop:4}
+    : {fontWeight:700};
+
+  if (!editing) {
+    if (!canEdit) return <span style={valStyle}>{money(value)}</span>;
+    return (
+      <button onClick={onStart} title="Clique para editar"
+        style={{...valStyle, display:'inline-flex', alignItems:'center', gap:6, background:'transparent',
+          border:'1px dashed #1E2028', borderRadius:6, padding:big?'2px 8px':'2px 6px', color:'#fff',
+          fontFamily:'inherit', cursor:'pointer'}}>
+        {money(value)}
+        <span style={{fontSize:big?12:10, color:'#00C896'}}>✎</span>
+      </button>
+    );
+  }
+
+  return (
+    <div style={{display:'flex', alignItems:'center', gap:6, flexWrap:'wrap'}}>
+      <input value={draft} onChange={e => setDraft(e.target.value)} autoFocus
+        onKeyDown={e => { if (e.key === 'Enter') onSave(draft); if (e.key === 'Escape') onCancel(); }}
+        placeholder="0,00" inputMode="decimal"
+        style={{width:big?120:100, padding:'6px 10px', background:'#161820', border:'1.5px solid #00C89660',
+          borderRadius:6, color:'#fff', fontSize:big?16:13, fontWeight:700, fontFamily:'inherit',
+          outline:'none', boxSizing:'border-box'}} />
+      <button onClick={() => onSave(draft)} disabled={saving}
+        style={{padding:'5px 9px', background:'#00C896', border:'none', borderRadius:5, color:'#0F1117',
+          fontSize:12, fontWeight:800, cursor:saving?'wait':'pointer', fontFamily:'inherit'}}>
+        {saving ? '…' : '✓'}
+      </button>
+      <button onClick={onCancel} disabled={saving}
+        style={{padding:'5px 9px', background:'#161820', border:'1px solid #1E2028', borderRadius:5,
+          color:'#8B8D97', fontSize:12, cursor:'pointer', fontFamily:'inherit'}}>✕</button>
+      <span style={{fontSize:11, color:'#8B8D97', whiteSpace:'nowrap'}}>= {money(parseNumberBR(draft))}</span>
+    </div>
+  );
+}
+
 export default function Billing() {
-  const { user } = useAuth();
+  const { user, checkPerm } = useAuth();
   const [PRICES, setPRICES] = useState({...DEFAULT_PRICES, pallet_day: DEFAULT_PRICES.pallet_month / 30});
   const [clients, setClients] = useState([]);
   const [selClient, setSelClient] = useState(null);
@@ -67,6 +123,20 @@ export default function Billing() {
   const [coletaData, setColetaData] = useState([]);
   const [positionWarnings, setPositionWarnings] = useState([]);
   const [tab, setTab] = useState('resumo');
+  // Manual per-client/per-month values (faturamento_manual/{cliente}_{YYYY-MM}).
+  // Never derived: no stored document means zero.
+  const [manual, setManual] = useState({ wms_portal: 0, armazenagem: 0, frete: 0 });
+  const [manualErr, setManualErr] = useState('');
+  // 'slot:campo' — the slot prefix keeps the KPI editor and the Resumo-row
+  // editor for the same field from opening together.
+  const [editingField, setEditingField] = useState(null);
+  const [savingManual, setSavingManual] = useState(false);
+  // Guards against a slow response for a previous client/month landing on the
+  // current selection — which would otherwise let a save write the wrong
+  // client's value into this one.
+  const loadKeyRef = useRef('');
+
+  const canEditManual = user?.role === 'diretor' || user?.role === 'comercial' || !!checkPerm?.('billing.editar');
 
   useEffect(() => { loadAll(); }, []);
 
@@ -111,15 +181,51 @@ export default function Billing() {
   useEffect(() => { if (selClient && month) loadClientData(); }, [selClient, month]);
 
   async function loadClientData() {
+    // Any open inline editor belongs to the previous selection — close it.
+    setEditingField(null);
+    const reqKey = `${selClient}||${month}`;
+    loadKeyRef.current = reqKey;
+    const stale = () => loadKeyRef.current !== reqKey;
     try {
       const key = `billing_${selClient}_${month}`.replace(/\s/g,'_');
       const d = await getDoc(doc(db, 'billing', key));
+      if (stale()) return;
       if (d.exists()) {
         const data = d.data();
         setSales(data.sales ? JSON.parse(data.sales) : []);
         setPallets(data.pallets ? JSON.parse(data.pallets) : []);
       } else { setSales([]); setPallets([]); }
-    } catch(e) { console.error(e); setSales([]); setPallets([]); }
+    } catch(e) { console.error(e); if (!stale()) { setSales([]); setPallets([]); } }
+
+    const m = await getManualBilling(selClient, month);
+    if (stale()) return;
+    setManual({ wms_portal: m.wms_portal, armazenagem: m.armazenagem, frete: m.frete });
+    setManualErr(m.error || '');
+  }
+
+  // Saves ONE field of ONE client for ONE month. The target client/month is
+  // captured here, and the inline editor is only ever open for the current
+  // selection, so this can never touch another client or competência.
+  async function saveManualField(field, raw) {
+    if (!canEditManual) { showToast('Sem permissão para editar valores.'); return; }
+    const targetClient = selClient, targetMonth = month;
+    const valor = parseNumberBR(raw);
+    if (valor < 0) { showToast('Valor não pode ser negativo'); return; }
+    setSavingManual(true);
+    try {
+      await saveManualBilling(targetClient, targetMonth, { [field]: valor });
+      if (loadKeyRef.current === `${targetClient}||${targetMonth}`) {
+        setManual(prev => ({ ...prev, [field]: valor }));
+        setManualErr('');
+        setEditingField(null);
+      }
+      showToast(`${MANUAL_LABELS[field] || field} salvo: ${money(valor)}`);
+      logAction(user, 'BILLING_MANUAL', `${targetClient} ${targetMonth}: ${field} = ${valor.toFixed(2)}`).catch(()=>{});
+    } catch(e) {
+      console.error(e);
+      showToast('Erro ao salvar: ' + (e?.code || e?.message || 'falha'));
+    }
+    setSavingManual(false);
   }
 
   async function saveClientData(newSales, newPallets) {
@@ -321,18 +427,20 @@ tr:nth-child(even){background:#fafafa;}
 </div>
 <div class="section">
   <h2 class="green">Armazenagem — Posições Ocupadas</h2>
-  <table><thead><tr><th>Endereço</th><th>Produto</th><th style="text-align:center">Qtd</th><th style="text-align:center">Entrada</th><th style="text-align:center">Dias</th><th style="text-align:right">Valor</th></tr></thead>
+  <table><thead><tr><th>Endereço</th><th>Produto</th><th style="text-align:center">Qtd</th><th style="text-align:center">Entrada</th><th style="text-align:center">Dias</th><th style="text-align:right">Valor ref.</th></tr></thead>
   <tbody>${posRows||'<tr><td colspan="6" style="text-align:center;color:#999">Nenhuma posição</td></tr>'}
-  <tr class="total-row"><td colspan="5">Subtotal Armazenagem ${totals.finalPalletCost<=totals.minPalletCost?'(mínimo aplicado)':''}</td><td style="text-align:right">R$ ${totals.finalPalletCost.toLocaleString('pt-BR',{minimumFractionDigits:2})}</td></tr>
+  <tr class="total-row"><td colspan="5">Subtotal Armazenagem</td><td style="text-align:right">R$ ${totals.armazenagem.toLocaleString('pt-BR',{minimumFractionDigits:2})}</td></tr>
   </tbody></table>
+  <p style="font-size:10px;color:#999;margin-top:-4px">Valores por posição são apenas referência de conferência. O valor cobrado é o subtotal acima.</p>
 </div>
 <div class="section">
   <h2>Serviços Prestados</h2>
   <table><thead><tr><th>Data</th><th>Nº Venda</th><th>Nº Envio</th><th>Serviço</th><th style="text-align:right">Qtd</th><th style="text-align:right">Valor</th></tr></thead>
   <tbody>
   <tr><td colspan="4">Sistema WMS + Portal — Fixo mensal</td><td style="text-align:right">1</td><td style="text-align:right;font-weight:700">R$ ${totals.wms.toLocaleString('pt-BR',{minimumFractionDigits:2})}</td></tr>
+  <tr><td colspan="4">Frete — Fechamento do mês</td><td style="text-align:right">1</td><td style="text-align:right;font-weight:700">R$ ${totals.frete.toLocaleString('pt-BR',{minimumFractionDigits:2})}</td></tr>
   ${detailRows}
-  <tr class="total-row"><td colspan="5">Subtotal Serviços</td><td style="text-align:right">R$ ${(totals.salesTotal+totals.wms).toLocaleString('pt-BR',{minimumFractionDigits:2})}</td></tr>
+  <tr class="total-row"><td colspan="5">Subtotal Serviços</td><td style="text-align:right">R$ ${(totals.salesTotal+totals.wms+totals.frete).toLocaleString('pt-BR',{minimumFractionDigits:2})}</td></tr>
   </tbody></table>
 </div>
 <div class="grand-total"><div class="label">Total a Pagar</div><div class="value">R$ ${totals.total.toLocaleString('pt-BR',{minimumFractionDigits:2})}</div></div>
@@ -386,14 +494,16 @@ tr:nth-child(even){background:#fafafa;}
       salesByChannel[s.canal].valor += s.valor || 0;
     });
     const wmsPositions = clientPositions;
-    const manualPalletCost = pallets.reduce((sum, p) => sum + palletDays(p) * PRICES.pallet_day, 0);
-    const wmsPalletCost = wmsPositions * PRICES.pallet_month;
-    const palletCost = Math.max(manualPalletCost, wmsPalletCost);
-    const minPalletCost = PRICES.min_monthly;
-    const finalPalletCost = Math.max(palletCost, minPalletCost);
+    // Reference figures from the price table — shown for comparison only.
+    // They do NOT feed the invoice: armazenagem is a manual value now.
+    const palletsRefCost = pallets.reduce((sum, p) => sum + palletDays(p) * PRICES.pallet_day, 0);
+    const positionsRefCost = wmsPositions * PRICES.pallet_month;
     const salesTotal = sales.reduce((sum, s) => sum + (s.valor || 0), 0);
-    const wms = PRICES.wms;
-    const total = finalPalletCost + salesTotal + wms;
+    // Billed values: entered by hand per client + month, never derived.
+    const armazenagem = parseNumberBR(manual.armazenagem);
+    const wms = parseNumberBR(manual.wms_portal);
+    const frete = parseNumberBR(manual.frete);
+    const total = armazenagem + wms + frete + salesTotal;
     const monthStart = month + '-01';
     const monthEnd = month + '-31';
     let autoFullItems = 0;
@@ -407,8 +517,8 @@ tr:nth-child(even){background:#fafafa;}
         });
       }
     });
-    return { salesByChannel, palletCost, minPalletCost, finalPalletCost, salesTotal, wms, total, activePallets: pallets.filter(p=>!p.saida).length, autoFullItems, wmsPositions };
-  }, [sales, pallets]);
+    return { salesByChannel, palletsRefCost, positionsRefCost, armazenagem, frete, salesTotal, wms, total, activePallets: pallets.filter(p=>!p.saida).length, autoFullItems, wmsPositions };
+  }, [sales, pallets, manual, PRICES, clientPositions, coletaData, month, selClient]);
 
   if (loading) return <div style={S.loadPage}><div style={{color:'#00C896',fontSize:16}}>Carregando...</div></div>;
 
@@ -465,9 +575,12 @@ tr:nth-child(even){background:#fafafa;}
 
         <div className='bill-kpis' style={S.kpiRow}>
           <div style={S.kpi}>
-            <div style={S.kpiL}>Pallets (proporcional)</div>
-            <div style={S.kpiV}>R$ {totals.finalPalletCost.toLocaleString('pt-BR',{minimumFractionDigits:2})}</div>
-            <div style={{fontSize:10,color:'#8B8D97',marginTop:4}}>{clientPositions} posições WMS · Mín R$ 1.500</div>
+            <div style={S.kpiL}>Armazenagem (manual)</div>
+            <ManualValue value={manual.armazenagem} big canEdit={canEditManual} saving={savingManual}
+              editing={editingField==='kpi:armazenagem'}
+              onStart={()=>setEditingField('kpi:armazenagem')} onCancel={()=>setEditingField(null)}
+              onSave={(v)=>saveManualField('armazenagem', v)} />
+            <div style={{fontSize:10,color:'#8B8D97',marginTop:4}}>{clientPositions} posições WMS · referência R$ {totals.positionsRefCost.toLocaleString('pt-BR',{minimumFractionDigits:2})}</div>
           </div>
           <div style={S.kpi}>
             <div style={S.kpiL}>Vendas / Serviços</div>
@@ -475,8 +588,20 @@ tr:nth-child(even){background:#fafafa;}
             <div style={{fontSize:10,color:'#8B8D97',marginTop:4}}>{sales.length} lançamentos</div>
           </div>
           <div style={S.kpi}>
-            <div style={S.kpiL}>WMS Fixo</div>
-            <div style={S.kpiV}>R$ {totals.wms.toLocaleString('pt-BR',{minimumFractionDigits:2})}</div>
+            <div style={S.kpiL}>WMS + Portal (manual)</div>
+            <ManualValue value={manual.wms_portal} big canEdit={canEditManual} saving={savingManual}
+              editing={editingField==='kpi:wms_portal'}
+              onStart={()=>setEditingField('kpi:wms_portal')} onCancel={()=>setEditingField(null)}
+              onSave={(v)=>saveManualField('wms_portal', v)} />
+            <div style={{fontSize:10,color:'#8B8D97',marginTop:4}}>Valor fixo do mês · digitado manualmente</div>
+          </div>
+          <div style={S.kpi}>
+            <div style={S.kpiL}>Frete (manual)</div>
+            <ManualValue value={manual.frete} big canEdit={canEditManual} saving={savingManual}
+              editing={editingField==='kpi:frete'}
+              onStart={()=>setEditingField('kpi:frete')} onCancel={()=>setEditingField(null)}
+              onSave={(v)=>saveManualField('frete', v)} />
+            <div style={{fontSize:10,color:'#8B8D97',marginTop:4}}>Frete do mês · não inclui os fretes lançados em vendas</div>
           </div>
           <div style={{...S.kpi,background:'#00C89610',borderColor:'#00C89640'}}>
             <div style={S.kpiL}>TOTAL MÊS</div>
@@ -491,6 +616,12 @@ tr:nth-child(even){background:#fafafa;}
         {totals.autoFullItems > 0 && (
           <div style={{background:'#00C89610',border:'1px solid #00C89630',borderRadius:10,padding:'12px 16px',marginBottom:12,fontSize:13}}>
             <span style={{color:'#00C896',fontWeight:700}}>Full ML automático:</span> {totals.autoFullItems.toLocaleString('pt-BR')} itens detectados nas coletas do mês = <span style={{fontWeight:700}}>R$ {(totals.autoFullItems * PRICES.full_unit).toLocaleString('pt-BR',{minimumFractionDigits:2})}</span>
+          </div>
+        )}
+
+        {manualErr && (
+          <div style={{background:'#dc262610',border:'1px solid #dc262640',borderRadius:10,padding:'12px 16px',marginBottom:12,fontSize:12,color:'#fca5a5'}}>
+            <span style={{fontWeight:700}}>⚠ Valores manuais:</span> {manualErr}
           </div>
         )}
 
@@ -515,14 +646,55 @@ tr:nth-child(even){background:#fafafa;}
         {/* ── Resumo ── */}
         {tab === 'resumo' && (
           <div style={S.card}>
-            <h3 style={{fontSize:16,fontWeight:700,marginBottom:16}}>Resumo — {selClient} — {month}</h3>
+            <h3 style={{fontSize:16,fontWeight:700,marginBottom:4}}>Resumo — {selClient} — {month}</h3>
+            <p style={{fontSize:12,color:'#8B8D97',marginBottom:16}}>
+              WMS + Portal, Armazenagem e Frete são valores manuais deste cliente neste mês
+              {canEditManual ? ' — clique no valor para editar.' : '.'}
+            </p>
             <table style={S.table}>
               <thead><tr>
                 <th style={S.th}>Serviço</th><th style={{...S.th,textAlign:'right'}}>Qtd</th><th style={{...S.th,textAlign:'right'}}>Valor Unit.</th><th style={{...S.th,textAlign:'right'}}>Total</th>
               </tr></thead>
               <tbody>
-                <tr><td style={S.td}>WMS + Portal</td><td style={{...S.td,textAlign:'right'}}>1</td><td style={{...S.td,textAlign:'right'}}>R$ 2.000,00</td><td style={{...S.td,textAlign:'right',fontWeight:700}}>R$ {totals.wms.toLocaleString('pt-BR',{minimumFractionDigits:2})}</td></tr>
-                <tr><td style={S.td}>Armazenagem ({clientPositions} posições{totals.finalPalletCost<=totals.minPalletCost?' — mínimo aplicado':''})</td><td style={{...S.td,textAlign:'right'}}>{clientPositions} pos.</td><td style={{...S.td,textAlign:'right'}}>R$ {PRICES.pallet_month.toFixed(2)}/mês</td><td style={{...S.td,textAlign:'right',fontWeight:700}}>R$ {totals.finalPalletCost.toLocaleString('pt-BR',{minimumFractionDigits:2})}</td></tr>
+                <tr>
+                  <td style={S.td}>WMS + Portal <span style={{fontSize:10,color:'#8B8D97',fontWeight:600}}>· manual</span></td>
+                  <td style={{...S.td,textAlign:'right'}}>1</td>
+                  <td style={{...S.td,textAlign:'right',color:'#8B8D97'}}>—</td>
+                  <td style={{...S.td,textAlign:'right'}}>
+                    <div style={{display:'flex',justifyContent:'flex-end'}}>
+                      <ManualValue value={manual.wms_portal} canEdit={canEditManual} saving={savingManual}
+                        editing={editingField==='row:wms_portal'}
+                        onStart={()=>setEditingField('row:wms_portal')} onCancel={()=>setEditingField(null)}
+                        onSave={(v)=>saveManualField('wms_portal', v)} />
+                    </div>
+                  </td>
+                </tr>
+                <tr>
+                  <td style={S.td}>Armazenagem <span style={{fontSize:10,color:'#8B8D97',fontWeight:600}}>· manual</span></td>
+                  <td style={{...S.td,textAlign:'right'}}>{clientPositions} pos.</td>
+                  <td style={{...S.td,textAlign:'right',color:'#8B8D97'}}>—</td>
+                  <td style={{...S.td,textAlign:'right'}}>
+                    <div style={{display:'flex',justifyContent:'flex-end'}}>
+                      <ManualValue value={manual.armazenagem} canEdit={canEditManual} saving={savingManual}
+                        editing={editingField==='row:armazenagem'}
+                        onStart={()=>setEditingField('row:armazenagem')} onCancel={()=>setEditingField(null)}
+                        onSave={(v)=>saveManualField('armazenagem', v)} />
+                    </div>
+                  </td>
+                </tr>
+                <tr>
+                  <td style={S.td}>Frete <span style={{fontSize:10,color:'#8B8D97',fontWeight:600}}>· manual</span></td>
+                  <td style={{...S.td,textAlign:'right'}}>1</td>
+                  <td style={{...S.td,textAlign:'right',color:'#8B8D97'}}>—</td>
+                  <td style={{...S.td,textAlign:'right'}}>
+                    <div style={{display:'flex',justifyContent:'flex-end'}}>
+                      <ManualValue value={manual.frete} canEdit={canEditManual} saving={savingManual}
+                        editing={editingField==='row:frete'}
+                        onStart={()=>setEditingField('row:frete')} onCancel={()=>setEditingField(null)}
+                        onSave={(v)=>saveManualField('frete', v)} />
+                    </div>
+                  </td>
+                </tr>
                 {Object.keys(totals.salesByChannel).map(ch => {
                   const d = totals.salesByChannel[ch];
                   if (!d || d.count === 0) return null;
@@ -531,7 +703,8 @@ tr:nth-child(even){background:#fafafa;}
                 <tr style={{background:'#00C89610'}}><td style={{...S.td,fontWeight:900,fontSize:15}} colSpan={3}>TOTAL</td><td style={{...S.td,textAlign:'right',fontWeight:900,fontSize:18,color:'#00C896'}}>R$ {totals.total.toLocaleString('pt-BR',{minimumFractionDigits:2})}</td></tr>
               </tbody>
             </table>
-            <h3 style={{fontSize:14,fontWeight:700,marginTop:24,marginBottom:12}}>Posições Ocupadas — Datas de Entrada</h3>
+            <h3 style={{fontSize:14,fontWeight:700,marginTop:24,marginBottom:4}}>Posições Ocupadas — Datas de Entrada</h3>
+            <p style={{fontSize:11,color:'#8B8D97',marginBottom:12}}>Referência de conferência — não entra no total. O valor cobrado é a Armazenagem manual acima.</p>
             <table style={S.table}><thead><tr>
               <th style={S.th}>Endereço</th><th style={S.th}>Produto</th><th style={S.th}>Qtd</th><th style={S.th}>Data Entrada</th><th style={S.th}>Dias</th><th style={{...S.th,textAlign:'right'}}>Valor Proporcional</th>
             </tr></thead><tbody>
@@ -710,7 +883,7 @@ tr:nth-child(even){background:#fafafa;}
               <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
                 <div>
                   <h3 style={{fontSize:14,fontWeight:700,color:'#00C896'}}>Controle de Pallets — {selClient}</h3>
-                  <p style={{fontSize:12,color:'#8B8D97',marginTop:4}}>R$ {PRICES.pallet_day.toFixed(2)}/dia por pallet · Mín. R$ 1.500/mês</p>
+                  <p style={{fontSize:12,color:'#8B8D97',marginTop:4}}>R$ {PRICES.pallet_day.toFixed(2)}/dia por pallet · referência de conferência — a Armazenagem cobrada é o valor manual do Resumo</p>
                 </div>
                 <button onClick={addPallet} style={S.btnMain}>+ Entrada de Pallet</button>
               </div>

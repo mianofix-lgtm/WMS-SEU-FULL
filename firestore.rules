@@ -73,5 +73,16 @@ service cloud.firestore {
       allow read: if isAuth() && isInternal();
       allow write: if isAuth() && getUserRole() in ['diretor', 'financeiro'];
     }
+
+    // Valores manuais do faturamento por cliente + competência
+    // (faturamento_manual/{cliente}_{YYYY-MM}).
+    // Leitura restrita aos perfis internos: ao contrário de /billing, um
+    // cliente NÃO pode ler os valores faturados dos outros. O Portal do
+    // cliente não lê esta coleção. Se algum dia ele precisar mostrar o total
+    // da fatura, esta regra terá que liberar o dono (resource.data.client).
+    match /faturamento_manual/{docId} {
+      allow read: if isAuth() && isInternal();
+      allow write: if isAuth() && getUserRole() in ['diretor', 'comercial'];
+    }
   }
 }

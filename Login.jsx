@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { login } from './firebase.js';
+import { login, sendPasswordReset } from './firebase.js';
 import { LOGO_ICON } from './logo.js';
 import { useAuth } from './App.jsx';
 
@@ -20,6 +20,12 @@ const S = {
   warn: { background:'#fbbf2420', border:'1px solid #fbbf2440', borderRadius:10, padding:'16px', color:'#fbbf24', fontSize:14, marginBottom:20, textAlign:'center', lineHeight:1.6 },
   links: { display:'flex', justifyContent:'space-between', marginTop:24 },
   link: { color:'#8B8D97', fontSize:14, textDecoration:'none' },
+  forgotBtn: { display:'block', width:'100%', marginTop:14, background:'transparent', border:'none', color:'#8B8D97', fontSize:13, fontFamily:'inherit', cursor:'pointer', textAlign:'center', padding:4, textDecoration:'underline' },
+  ovl: { position:'fixed', inset:0, background:'#000c', zIndex:200, display:'flex', alignItems:'center', justifyContent:'center', padding:24 },
+  modal: { background:'#0F1117', border:'1px solid #1E2028', borderRadius:16, padding:32, maxWidth:420, width:'100%' },
+  ok: { background:'#00C89615', border:'1px solid #00C89640', borderRadius:10, padding:'14px 16px', color:'#00C896', fontSize:13, marginBottom:20, lineHeight:1.6 },
+  btnGhost: { padding:'10px 20px', background:'transparent', color:'#8B8D97', border:'1px solid #1E2028', borderRadius:8, cursor:'pointer', fontFamily:'inherit', fontSize:14 },
+  btnSm: { padding:'10px 22px', background:'#00C896', color:'#2E2C3A', border:'none', borderRadius:8, fontWeight:700, cursor:'pointer', fontFamily:'inherit', fontSize:14 },
 };
 
 export default function Login() {
@@ -29,6 +35,11 @@ export default function Login() {
   const [pending, setPending] = useState(false);
   const [loading, setLoading] = useState(false);
   const [focusField, setFocusField] = useState('');
+  const [resetOpen, setResetOpen] = useState(false);
+  const [resetEmail, setResetEmail] = useState('');
+  const [resetErr, setResetErr] = useState('');
+  const [resetSent, setResetSent] = useState(false);
+  const [resetting, setResetting] = useState(false);
   const nav = useNavigate();
   const { setUser } = useAuth();
 
@@ -55,6 +66,36 @@ export default function Login() {
       }
     } finally {
       setLoading(false);
+    }
+  }
+
+  function openReset() {
+    setResetEmail(email);
+    setResetErr(''); setResetSent(false);
+    setResetOpen(true);
+  }
+
+  // Always reports the same generic success message, so a stranger cannot use
+  // this form to find out which e-mails are registered (enumeration).
+  async function handleReset(e) {
+    e.preventDefault();
+    setResetErr('');
+    setResetting(true);
+    try {
+      await sendPasswordReset(resetEmail);
+      setResetSent(true);
+    } catch (error) {
+      if (error.code === 'auth/invalid-email') {
+        setResetErr('E-mail inválido. Verifique o endereço digitado.');
+      } else if (error.code === 'auth/too-many-requests') {
+        setResetErr('Muitas tentativas. Aguarde alguns minutos e tente novamente.');
+      } else if (error.code === 'auth/user-not-found') {
+        setResetSent(true); // same response as success — never confirm existence
+      } else {
+        setResetErr('Não foi possível enviar o e-mail agora. Tente novamente em instantes.');
+      }
+    } finally {
+      setResetting(false);
     }
   }
 
@@ -89,11 +130,50 @@ export default function Login() {
           </button>
         </form>
 
+        <button type="button" onClick={openReset} style={S.forgotBtn}>Esqueci minha senha</button>
+
         <div style={S.links}>
           <Link to="/" style={S.link}>← Voltar ao site</Link>
           <Link to="/cadastro" style={{...S.link, color:'#00C896', fontWeight:600}}>Criar conta →</Link>
         </div>
       </div>
+
+      {resetOpen && (
+        <div style={S.ovl} onClick={() => setResetOpen(false)}>
+          <div style={S.modal} onClick={e => e.stopPropagation()}>
+            <h3 style={{fontSize:20, fontWeight:800, marginBottom:8}}>Redefinir senha</h3>
+            {resetSent ? (
+              <>
+                <div style={S.ok}>
+                  Se este e-mail estiver cadastrado, enviamos um link para redefinir a senha.
+                  Confira a caixa de entrada e o spam.
+                </div>
+                <div style={{display:'flex', justifyContent:'flex-end'}}>
+                  <button onClick={() => setResetOpen(false)} style={S.btnSm}>Fechar</button>
+                </div>
+              </>
+            ) : (
+              <form onSubmit={handleReset}>
+                <p style={{color:'#8B8D97', fontSize:14, marginBottom:20, lineHeight:1.6}}>
+                  Informe seu e-mail e enviaremos um link para você criar uma nova senha.
+                </p>
+                {resetErr && <div style={S.err}>{resetErr}</div>}
+                <label style={S.label}>Email</label>
+                <input type="email" value={resetEmail} onChange={e => setResetEmail(e.target.value)}
+                  onFocus={() => setFocusField('reset')} onBlur={() => setFocusField('')}
+                  style={{...S.input, borderColor: focusField==='reset'?'#00C896':'#1E2028'}}
+                  placeholder="seu@email.com" required autoFocus autoComplete="email" />
+                <div style={{display:'flex', gap:10, justifyContent:'flex-end'}}>
+                  <button type="button" onClick={() => setResetOpen(false)} style={S.btnGhost}>Cancelar</button>
+                  <button type="submit" disabled={resetting} style={{...S.btnSm, opacity:resetting?0.7:1}}>
+                    {resetting ? 'Enviando...' : 'Enviar link →'}
+                  </button>
+                </div>
+              </form>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

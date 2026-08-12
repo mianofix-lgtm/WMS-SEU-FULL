@@ -2,11 +2,11 @@ import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from './App.jsx';
 import { LOGO_ICON } from './logo.js';
-import { getAllUsers, approveUser, rejectUser, db, getPricing, savePricing, DEFAULT_PRICES, getWmsData, logAction, getLogs, PERMISSIONS, GRANULAR_PERMISSIONS, inviteCollaborator } from './firebase.js';
+import { getAllUsers, approveUser, rejectUser, db, getPricing, savePricing, DEFAULT_PRICES, getWmsData, logAction, getLogs, PERMISSIONS, GRANULAR_PERMISSIONS, inviteCollaborator, sendPasswordReset } from './firebase.js';
 import { doc, updateDoc, deleteDoc, collection, getDocs, getDoc, setDoc } from 'firebase/firestore';
 
 export default function Admin() {
-  const { user } = useAuth();
+  const { user, checkPerm } = useAuth();
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState('');
@@ -18,6 +18,7 @@ export default function Admin() {
   const [inviteForm, setInviteForm] = useState({nome:'',email:'',role:'logistica',loja:''});
   const [inviteResult, setInviteResult] = useState(null);
   const [inviting, setInviting] = useState(false);
+  const [sendingReset, setSendingReset] = useState(false);
   const [prices, setPrices] = useState(DEFAULT_PRICES);
   const [pricesTab, setPricesTab] = useState(false);
   const [pricesSaved, setPricesSaved] = useState(false);
@@ -141,6 +142,28 @@ export default function Admin() {
     } catch(e) { showToast('Erro: '+e.message); }
   }
 
+  // Fires Firebase Auth's reset e-mail for another user. No password is read,
+  // written or generated here — the user sets their own on the link.
+  // Gated by the same permission that gates this panel (diretor only).
+  async function handleSendReset(u) {
+    if (!canManageUsers) { showToast('Sem permissão para esta ação.'); return; }
+    if (!u?.email) { showToast('Usuário sem e-mail cadastrado.'); return; }
+    if (!confirm(`Enviar link de redefinição de senha para ${u.email}?`)) return;
+    setSendingReset(true);
+    try {
+      await sendPasswordReset(u.email);
+      showToast(`Link de redefinição enviado para ${u.email}`);
+      logAction(user, 'PASSWORD_RESET', `reset de senha solicitado para ${u.email} por ${user?.email || 'system'}`).catch(()=>{});
+    } catch(e) {
+      const msg = e.code === 'auth/invalid-email' ? 'e-mail inválido'
+        : e.code === 'auth/user-not-found' ? 'não existe conta de login para este e-mail'
+        : e.code === 'auth/too-many-requests' ? 'muitas tentativas, aguarde alguns minutos'
+        : (e.message || 'falha ao enviar');
+      showToast('Erro: ' + msg);
+    }
+    setSendingReset(false);
+  }
+
   async function handleInvite() {
     if (!inviteForm.email.trim() || !inviteForm.nome.trim()) { showToast('Preencha nome e e-mail'); return; }
     setInviting(true);
@@ -164,6 +187,9 @@ export default function Admin() {
     if (!confirm(`EXCLUIR ${u.nome||u.email}? Remove o perfil do sistema.`)) return;
     try { await deleteDoc(doc(db,'users',u.uid)); showToast('Removido.'); loadUsers(); } catch(e) { showToast('Erro: '+e.message); }
   }
+
+  // Same gate the /admin route uses for this panel — diretor only.
+  const canManageUsers = user?.role === 'diretor' || checkPerm?.('admin.usuarios');
 
   const pending = users.filter(u => u.status === 'pendente');
   const active = users.filter(u => u.status !== 'pendente' && u.status !== 'rejeitado');
@@ -303,6 +329,22 @@ export default function Admin() {
           ))}
         </div>
 
+        {/* Acesso / senha */}
+        {canManageUsers && (
+          <div style={{marginBottom:16}}>
+            <div style={{fontSize:12,fontWeight:700,color:'#8B8D97',textTransform:'uppercase',letterSpacing:1,marginBottom:8}}>Acesso</div>
+            <div style={{background:'#161820',border:'1px solid #1E2028',borderRadius:8,padding:12}}>
+              <p style={{fontSize:11,color:'#8B8D97',marginBottom:10,lineHeight:1.6}}>
+                Envia um e-mail do Firebase com um link para o próprio usuário criar uma nova senha. Ninguém aqui vê ou define a senha.
+              </p>
+              <button onClick={()=>handleSendReset(editModal)} disabled={sendingReset}
+                style={{padding:'10px 18px',background:'#3b82f620',border:'1px solid #3b82f640',borderRadius:8,color:'#93c5fd',fontSize:13,fontWeight:600,cursor:sendingReset?'not-allowed':'pointer',fontFamily:'inherit',opacity:sendingReset?0.6:1}}>
+                {sendingReset ? '⏳ Enviando...' : '✉ Enviar link de redefinição de senha'}
+              </button>
+            </div>
+          </div>
+        )}
+
         <div style={{display:'flex',gap:10,justifyContent:'flex-end',marginTop:8}}><button onClick={()=>setEditModal(null)} style={bgS}>Cancelar</button><button onClick={handleEditSave} style={bmS}>Salvar →</button></div>
       </div></div>}
 
@@ -356,7 +398,11 @@ export default function Admin() {
       {pricesTab && (
         <div style={{background:'#0F1117',border:'1px solid #1E2028',borderRadius:14,padding:24,marginBottom:32}}>
           <h2 style={{fontSize:18,fontWeight:800,marginBottom:4}}>Tabela de Preços — Seu Full</h2>
-          <p style={{color:'#8B8D97',fontSize:13,marginBottom:20}}>Altere os valores e clique em Salvar. Os novos preços valem para os próximos faturamentos.</p>
+          <p style={{color:'#8B8D97',fontSize:13,marginBottom:8}}>Altere os valores e clique em Salvar. Os novos preços valem para os próximos faturamentos.</p>
+          <p style={{color:'#fbbf24',fontSize:12,marginBottom:20}}>
+            ⓘ <strong>Frete</strong>, <strong>WMS/Portal</strong>, <strong>Posição Pallet</strong> e <strong>Mínimo Armazenagem</strong> aqui são apenas referência.
+            No Faturamento, WMS + Portal, Armazenagem e Frete são digitados manualmente por cliente e por mês.
+          </p>
           
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:16}}>
             {[
@@ -374,6 +420,7 @@ export default function Admin() {
               ['Kit Grande (R$/unid)', 'kit_large'],
               ['Montagem Embalagem (R$/unid)', 'montagem_embalagem'],
               ['Triagem Devoluções (R$/NF)', 'devolucao'],
+              ['Frete (R$/mês — referência)', 'frete'],
             ].map(([label, key]) => (
               <div key={key}>
                 <label style={{display:'block',fontSize:11,fontWeight:600,color:'#8B8D97',textTransform:'uppercase',letterSpacing:1,marginBottom:4}}>{label}</label>
@@ -417,7 +464,7 @@ export default function Admin() {
                   <tr><td colSpan={4} style={{textAlign:'center',color:'#8B8D97',padding:20}}>Nenhum log encontrado.</td></tr>
                 ) : logs.map(l => {
                   const dt = new Date(l.timestamp);
-                  const actionColors = {WMS_SAVE:'#00C896',WMS_CLEAR:'#fbbf24',COLETA:'#3b82f6',BILLING_ADD:'#00C896',BILLING_EDIT:'#f97316',BILLING_REMOVE:'#dc2626',INSUMO:'#7c3aed',USER_APPROVE:'#00C896',PRICING_UPDATE:'#fbbf24',BACKUP:'#3b82f6'};
+                  const actionColors = {WMS_SAVE:'#00C896',WMS_CLEAR:'#fbbf24',COLETA:'#3b82f6',BILLING_ADD:'#00C896',BILLING_EDIT:'#f97316',BILLING_REMOVE:'#dc2626',INSUMO:'#7c3aed',USER_APPROVE:'#00C896',USER_INVITE:'#00C896',PASSWORD_RESET:'#93c5fd',PRICING_UPDATE:'#fbbf24',BACKUP:'#3b82f6'};
                   return (
                     <tr key={l.id} style={{borderBottom:'1px solid #1E202850'}}>
                       <td style={{padding:'6px 10px',color:'#8B8D97',whiteSpace:'nowrap',fontSize:11}}>{dt.toLocaleDateString('pt-BR')} {dt.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}</td>

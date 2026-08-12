@@ -1,8 +1,8 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from './App.jsx';
 import { LOGO_ICON } from './logo.js';
-import { db, getWmsData, getPricing, getMonthCosts, saveMonthCosts, copyCostsFromPreviousMonth, sumCostItems, resolveCostItemValue, parseNumberBR, checkPerm } from './firebase.js';
+import { db, getWmsData, getMonthCosts, saveMonthCosts, copyCostsFromPreviousMonth, sumCostItems, resolveCostItemValue, parseNumberBR, checkPerm, getManualBillingMonth, manualClientKey } from './firebase.js';
 import { collection, getDocs, doc, getDoc, setDoc } from 'firebase/firestore';
 
 const fmtBRL = (n) => (Number(n) || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -13,8 +13,12 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [billingDocs, setBillingDocs] = useState([]);
   const [wmsData, setWmsData] = useState({});
-  const [pricing, setPricing] = useState({});
   const [coletaHistory, setColetaHistory] = useState([]);
+  // Armazenagem / WMS+Portal / Frete come from faturamento_manual — the SAME
+  // source the Faturamento screen bills from. Nothing is recalculated here.
+  const [manualMonth, setManualMonth] = useState({ byClient:{}, collisions:[], error:null });
+  const [loadingManual, setLoadingManual] = useState(true);
+  const manualKeyRef = useRef('');
   const [month, setMonth] = useState(() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`; });
 
   // Operating costs — per competência (month), loaded from custos_operacionais/{YYYY-MM}
@@ -32,19 +36,27 @@ export default function Dashboard() {
   const isAdmin = user?.role === 'diretor';
 
   useEffect(() => { loadAll(); }, []);
-  useEffect(() => { loadInsumos(); loadMonthCosts(); }, [month]);
+  useEffect(() => { loadInsumos(); loadMonthCosts(); loadManualMonth(); }, [month]);
+
+  async function loadManualMonth() {
+    const reqMonth = month;
+    manualKeyRef.current = reqMonth;
+    setLoadingManual(true);
+    const res = await getManualBillingMonth(reqMonth);
+    if (manualKeyRef.current !== reqMonth) return; // a newer month won the race
+    setManualMonth(res);
+    setLoadingManual(false);
+  }
 
   async function loadAll() {
     setLoading(true);
     try {
-      const [wms, pr, snap, coletaDoc] = await Promise.all([
+      const [wms, snap, coletaDoc] = await Promise.all([
         getWmsData(),
-        getPricing(),
         getDocs(collection(db, 'billing')),
         getDoc(doc(db, 'wms', 'coletas')).catch(()=>null),
       ]);
       setWmsData(wms || {});
-      setPricing(pr);
       if (coletaDoc?.exists?.() && coletaDoc.data().history) setColetaHistory(JSON.parse(coletaDoc.data().history));
       const docs = [];
       snap.forEach(d => docs.push({id: d.id, ...d.data()}));
@@ -180,64 +192,88 @@ export default function Dashboard() {
     return byMonth;
   }, [billingDocs]);
 
-  // Current month data
+  // Current month data.
+  //
+  // Armazenagem, WMS + Portal and Frete are NOT calculated here: they are the
+  // manual values billed in the Faturamento screen (faturamento_manual), so the
+  // P&L and the invoices can never disagree. A client with no manual value for
+  // the month contributes 0 — by design, surfaced by the banner below.
   const currentMonth = useMemo(() => {
     const data = billingByMonth[month] || { clients: {}, totalSales: 0, totalSalesCount: 0 };
-    
-    // Count positions per client from WMS
-    const positionsByClient = {};
+    const manualByClient = manualMonth.byClient || {};
+
+    // Positions come from the LIVE WMS grid — the grid has no historical
+    // dimension, so this is occupancy today, not occupancy in the chosen month.
+    // It is informational only and no longer drives any revenue figure.
+    const positionsByKey = {};
     let totalPositions = 0;
     Object.values(wmsData).forEach(c => {
-      if (c.loja) {
-        const key = c.loja.trim();
-        if (!positionsByClient[key]) positionsByClient[key] = 0;
-        positionsByClient[key]++;
-        totalPositions++;
-      }
+      if (!c.loja) return;
+      const k = manualClientKey(c.loja);
+      positionsByKey[k] = (positionsByKey[k] || 0) + 1;
+      totalPositions++;
     });
 
-    // Calculate revenue
-    const palletPrice = pricing.pallet_month || 350;
-    const wmsPrice = pricing.wms || 2000;
-    const minMonthly = pricing.min_monthly || 1500;
-    
+    // Sales aggregated by the same normalized key, so a client written two ways
+    // in the billing docs lands on one row.
+    const salesByKey = {};
+    Object.entries(data.clients).forEach(([name, v]) => {
+      const k = manualClientKey(name);
+      if (!salesByKey[k]) salesByKey[k] = { salesTotal: 0, salesCount: 0 };
+      salesByKey[k].salesTotal += v.salesTotal || 0;
+      salesByKey[k].salesCount += v.salesCount || 0;
+    });
+
+    // Client set = union of three sources. A client that only has manual values
+    // (no positions, no sales) must still appear, or its revenue vanishes.
+    const clientNames = new Map(); // normalized key -> display name
+    const addClient = (name) => {
+      const k = manualClientKey(name);
+      if (!k) return;
+      if (!clientNames.has(k)) clientNames.set(k, String(name).trim());
+    };
+    Object.keys(data.clients).forEach(addClient);
+    Object.values(wmsData).forEach(c => { if (c.loja) addClient(c.loja); });
+    Object.values(manualByClient).forEach(m => addClient(m.client));
+
     const clientBreakdown = {};
-    const allClients = new Set([...Object.keys(data.clients), ...Object.keys(positionsByClient)]);
-    
-    allClients.forEach(client => {
-      const positions = positionsByClient[client] || 0;
-      const palletRevenue = Math.max(positions * palletPrice, minMonthly);
-      const salesData = data.clients[client] || { salesTotal: 0, salesCount: 0 };
-      const wmsRevenue = wmsPrice;
-      const total = palletRevenue + salesData.salesTotal + wmsRevenue;
-      
-      clientBreakdown[client] = {
-        positions,
-        palletRevenue,
-        wmsRevenue,
-        salesRevenue: salesData.salesTotal,
-        salesCount: salesData.salesCount,
-        total,
+    const missingManual = [];
+    clientNames.forEach((display, k) => {
+      const positions = positionsByKey[k] || 0;
+      const s = salesByKey[k] || { salesTotal: 0, salesCount: 0 };
+      const m = manualByClient[k];
+      const armazenagem = m?.armazenagem || 0;
+      const wms = m?.wms_portal || 0;
+      const frete = m?.frete || 0;
+      if (!armazenagem && !wms && !frete) missingManual.push(display);
+      clientBreakdown[display] = {
+        positions, armazenagem, wms, frete,
+        salesRevenue: s.salesTotal,
+        salesCount: s.salesCount,
+        total: armazenagem + wms + frete + s.salesTotal,
       };
     });
 
-    const totalClients = Object.keys(clientBreakdown).length;
-    const totalPalletRevenue = Object.values(clientBreakdown).reduce((s,c) => s + c.palletRevenue, 0);
-    const totalWmsRevenue = totalClients * wmsPrice;
+    const sum = (f) => Object.values(clientBreakdown).reduce((acc, c) => acc + c[f], 0);
+    const totalArmazenagem = sum('armazenagem');
+    const totalWms = sum('wms');
+    const totalFrete = sum('frete');
     const totalSalesRevenue = data.totalSales;
-    const totalRevenue = totalPalletRevenue + totalWmsRevenue + totalSalesRevenue;
+    const totalRevenue = totalArmazenagem + totalWms + totalFrete + totalSalesRevenue;
 
     return {
       clients: clientBreakdown,
-      totalClients,
+      totalClients: Object.keys(clientBreakdown).length,
       totalPositions,
-      totalPalletRevenue,
-      totalWmsRevenue,
+      totalArmazenagem,
+      totalWms,
+      totalFrete,
       totalSalesRevenue,
       totalRevenue,
       salesCount: data.totalSalesCount,
+      missingManual: missingManual.sort((a,b) => a.localeCompare(b)),
     };
-  }, [billingByMonth, month, wmsData, pricing]);
+  }, [billingByMonth, month, wmsData, manualMonth]);
 
   // ─── Costs / result / margin derive from the SELECTED month's items ───
   // Percentual items resolve against the month's total revenue, so any
@@ -315,6 +351,37 @@ export default function Dashboard() {
           <input type="month" value={month} onChange={e=>setMonth(e.target.value)} style={S.input} />
         </div>
 
+        {manualMonth.error && (
+          <div style={{background:'#dc262610',border:'1px solid #dc262640',borderRadius:10,padding:'14px 18px',marginBottom:16,fontSize:13,color:'#fca5a5'}}>
+            <strong>⚠ Falha ao ler os valores manuais.</strong> {manualMonth.error}
+            <div style={{marginTop:6,color:'#C0C2CC',fontSize:12}}>A receita de Armazenagem, WMS e Frete está zerada por erro de leitura — não confie nos números abaixo até resolver.</div>
+          </div>
+        )}
+
+        {manualMonth.collisions?.length > 0 && (
+          <div style={{background:'#fbbf2410',border:'1px solid #fbbf2440',borderRadius:10,padding:'12px 18px',marginBottom:16,fontSize:12,color:'#fbbf24'}}>
+            <strong>⚠ Nomes de cliente duplicados</strong> em {manualMonth.collisions.join(', ')} — há mais de um lançamento manual para o mesmo cliente neste mês. Os valores foram somados; confira no Faturamento.
+          </div>
+        )}
+
+        {!loadingManual && !manualMonth.error && currentMonth.missingManual.length > 0 && (
+          <div style={{background:'#fbbf2410',border:'1px solid #fbbf2440',borderRadius:10,padding:'14px 18px',marginBottom:16,fontSize:13}}>
+            <div style={{color:'#fbbf24',fontWeight:700,marginBottom:6}}>
+              ⚠ {currentMonth.missingManual.length} {currentMonth.missingManual.length === 1 ? 'cliente sem valores manuais' : 'clientes sem valores manuais'} em {new Date(month+'-15').toLocaleDateString('pt-BR',{month:'long',year:'numeric'})} — receita contabilizada como R$ 0
+            </div>
+            <div style={{color:'#C0C2CC',fontSize:12,lineHeight:1.6,marginBottom:8}}>
+              Isso significa <strong>campo não preenchido</strong> no Faturamento, e <strong>não</strong> queda de faturamento.
+              Armazenagem, WMS + Portal e Frete só entram no P&L depois de digitados por cliente e por mês.
+            </div>
+            <div style={{display:'flex',flexWrap:'wrap',gap:6,marginBottom:10}}>
+              {currentMonth.missingManual.map(c => (
+                <span key={c} style={{padding:'3px 10px',borderRadius:6,background:'#fbbf2420',color:'#fbbf24',fontSize:11,fontWeight:700}}>{c}</span>
+              ))}
+            </div>
+            <Link to="/billing" style={{color:'#00C896',fontSize:12,fontWeight:700,textDecoration:'none'}}>Preencher no Faturamento →</Link>
+          </div>
+        )}
+
         {/* Big KPIs */}
         <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:14,marginBottom:24}}>
           <div style={{...S.kpi,borderColor:'#00C89640'}}>
@@ -354,11 +421,13 @@ export default function Dashboard() {
         <div style={{display:'grid',gridTemplateColumns:'2fr 1fr',gap:20,marginBottom:24}}>
           {/* Revenue breakdown */}
           <div style={S.card}>
-            <h3 style={{fontSize:15,fontWeight:700,marginBottom:16}}>Composição da Receita</h3>
-            <div style={{display:'flex',gap:8,marginBottom:16}}>
+            <h3 style={{fontSize:15,fontWeight:700,marginBottom:4}}>Composição da Receita</h3>
+            <p style={{fontSize:11,color:'#8B8D97',marginBottom:14}}>Armazenagem, WMS e Frete vêm dos valores manuais do Faturamento deste mês.</p>
+            <div style={{display:'flex',gap:8,marginBottom:16,flexWrap:'wrap'}}>
               {[
-                ['Armazenagem', currentMonth.totalPalletRevenue, '#00C896'],
-                ['WMS', currentMonth.totalWmsRevenue, '#3b82f6'],
+                ['Armazenagem', currentMonth.totalArmazenagem, '#00C896'],
+                ['WMS', currentMonth.totalWms, '#3b82f6'],
+                ['Frete', currentMonth.totalFrete, '#a78bfa'],
                 ['Serviços', currentMonth.totalSalesRevenue, '#f97316'],
               ].map(([l,v,color]) => {
                 const pct = currentMonth.totalRevenue > 0 ? (v/currentMonth.totalRevenue*100) : 0;
@@ -488,13 +557,15 @@ export default function Dashboard() {
 
         {/* Client breakdown table */}
         <div style={S.card}>
-          <h3 style={{fontSize:15,fontWeight:700,marginBottom:16}}>Receita por Cliente — {new Date(month+'-15').toLocaleDateString('pt-BR',{month:'long',year:'numeric'})}</h3>
+          <h3 style={{fontSize:15,fontWeight:700,marginBottom:4}}>Receita por Cliente — {new Date(month+'-15').toLocaleDateString('pt-BR',{month:'long',year:'numeric'})}</h3>
+          <p style={{fontSize:11,color:'#8B8D97',marginBottom:14}}>Armazenagem, WMS e Frete são os valores manuais do Faturamento — <span style={{color:'#fbbf24'}}>em âmbar</span> os que estão sem preenchimento. Posições refletem a ocupação atual do WMS, não a do mês.</p>
           <table style={{width:'100%',borderCollapse:'collapse',fontSize:13}}>
             <thead><tr>
               <th style={S.th}>Cliente</th>
               <th style={{...S.th,textAlign:'right'}}>Posições</th>
               <th style={{...S.th,textAlign:'right'}}>Armazenagem</th>
               <th style={{...S.th,textAlign:'right'}}>WMS</th>
+              <th style={{...S.th,textAlign:'right'}}>Frete</th>
               <th style={{...S.th,textAlign:'right'}}>Serviços</th>
               <th style={{...S.th,textAlign:'right'}}>Lançamentos</th>
               <th style={{...S.th,textAlign:'right'}}>Total</th>
@@ -504,8 +575,9 @@ export default function Dashboard() {
                 <tr key={client}>
                   <td style={{...S.td,fontWeight:700}}>{client}</td>
                   <td style={{...S.td,textAlign:'right'}}>{data.positions}</td>
-                  <td style={{...S.td,textAlign:'right'}}>R$ {data.palletRevenue.toLocaleString('pt-BR',{minimumFractionDigits:0})}</td>
-                  <td style={{...S.td,textAlign:'right'}}>R$ {data.wmsRevenue.toLocaleString('pt-BR',{minimumFractionDigits:0})}</td>
+                  <td style={{...S.td,textAlign:'right',color:data.armazenagem?'#fff':'#fbbf24'}}>R$ {data.armazenagem.toLocaleString('pt-BR',{minimumFractionDigits:0})}</td>
+                  <td style={{...S.td,textAlign:'right',color:data.wms?'#fff':'#fbbf24'}}>R$ {data.wms.toLocaleString('pt-BR',{minimumFractionDigits:0})}</td>
+                  <td style={{...S.td,textAlign:'right'}}>R$ {data.frete.toLocaleString('pt-BR',{minimumFractionDigits:0})}</td>
                   <td style={{...S.td,textAlign:'right'}}>R$ {data.salesRevenue.toLocaleString('pt-BR',{minimumFractionDigits:0})}</td>
                   <td style={{...S.td,textAlign:'right',color:'#8B8D97'}}>{data.salesCount}</td>
                   <td style={{...S.td,textAlign:'right',fontWeight:800,color:'#00C896'}}>R$ {data.total.toLocaleString('pt-BR',{minimumFractionDigits:0})}</td>
@@ -514,8 +586,9 @@ export default function Dashboard() {
               <tr style={{background:'#00C89610'}}>
                 <td style={{...S.td,fontWeight:900}}>TOTAL</td>
                 <td style={{...S.td,textAlign:'right',fontWeight:800}}>{currentMonth.totalPositions}</td>
-                <td style={{...S.td,textAlign:'right',fontWeight:800}}>R$ {currentMonth.totalPalletRevenue.toLocaleString('pt-BR',{minimumFractionDigits:0})}</td>
-                <td style={{...S.td,textAlign:'right',fontWeight:800}}>R$ {currentMonth.totalWmsRevenue.toLocaleString('pt-BR',{minimumFractionDigits:0})}</td>
+                <td style={{...S.td,textAlign:'right',fontWeight:800}}>R$ {currentMonth.totalArmazenagem.toLocaleString('pt-BR',{minimumFractionDigits:0})}</td>
+                <td style={{...S.td,textAlign:'right',fontWeight:800}}>R$ {currentMonth.totalWms.toLocaleString('pt-BR',{minimumFractionDigits:0})}</td>
+                <td style={{...S.td,textAlign:'right',fontWeight:800}}>R$ {currentMonth.totalFrete.toLocaleString('pt-BR',{minimumFractionDigits:0})}</td>
                 <td style={{...S.td,textAlign:'right',fontWeight:800}}>R$ {currentMonth.totalSalesRevenue.toLocaleString('pt-BR',{minimumFractionDigits:0})}</td>
                 <td style={{...S.td,textAlign:'right',fontWeight:800}}>{currentMonth.salesCount}</td>
                 <td style={{...S.td,textAlign:'right',fontWeight:900,fontSize:16,color:'#00C896'}}>R$ {currentMonth.totalRevenue.toLocaleString('pt-BR',{minimumFractionDigits:0})}</td>

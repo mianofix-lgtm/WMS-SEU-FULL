@@ -1,5 +1,5 @@
 import { initializeApp, getApps } from 'firebase/app';
-import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged, createUserWithEmailAndPassword } from 'firebase/auth';
+import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged, createUserWithEmailAndPassword, sendPasswordResetEmail } from 'firebase/auth';
 import { getFirestore, doc, getDoc, setDoc, collection, getDocs, query, where, updateDoc, deleteDoc, runTransaction } from 'firebase/firestore';
  
 const firebaseConfig = {
@@ -77,6 +77,16 @@ export async function login(email, password) {
  
 export async function logout() {
   await signOut(auth);
+}
+
+// Password reset — fires Firebase Auth's own reset email. We never read,
+// write or generate passwords here: the user sets the new one on the link.
+// Throws the original FirebaseError so callers can branch on `e.code`
+// (auth/invalid-email, auth/user-not-found, auth/too-many-requests...).
+export async function sendPasswordReset(email) {
+  const target = String(email || '').trim();
+  if (!target) { const e = new Error('E-mail vazio'); e.code = 'auth/invalid-email'; throw e; }
+  await sendPasswordResetEmail(auth, target);
 }
  
 export function onAuth(callback) {
@@ -263,6 +273,9 @@ export const DEFAULT_PRICES = {
   kit_large: 4.00,
   montagem_embalagem: 0.50,
   devolucao: 2.00,
+  // Reference only: the billed freight is the manual per-client/per-month
+  // value in faturamento_manual.frete, never this price.
+  frete: 0,
 };
  
 export async function getPricing() {
@@ -514,6 +527,123 @@ export async function saveMonthCosts(month, itens, fechado = false) {
 export async function copyCostsFromPreviousMonth(month) {
   const prev = await getMonthCosts(_prevMonthKey(month));
   return prev.itens.map(it => ({ ...it, id: _genId() }));
+}
+
+
+// ─── Manual billing values per client + month ────────────
+// Stored as faturamento_manual/{cliente}_{YYYY-MM}, following the same
+// competência convention as custos_operacionais. Each document is scoped to
+// ONE client and ONE month, so a write here can never reach another client
+// or another competência.
+//
+// Fields: { wms_portal: Number, armazenagem: Number, frete: Number }
+// These are NOT derived from anything: no value stored means 0. Nothing is
+// ever auto-calculated as a fallback.
+export const MANUAL_BILLING_FIELDS = ['wms_portal', 'armazenagem', 'frete'];
+
+// Firestore doc ids cannot contain '/', cannot be '.' or '..' and cannot match
+// __*__ — so the client name is sanitized before being used as part of the id.
+export function manualBillingKey(client, month) {
+  const safe = String(client || '')
+    .trim()
+    .replace(/\s+/g, '_')
+    .replace(/[\/\\.#\[\]*`$]/g, '-')
+    .replace(/^_+|_+$/g, '');
+  return `${safe}_${month}`;
+}
+
+// Join key for a client name across collections. Only whitespace and case are
+// normalized, so "Lugu", "LUGU" and "lugu " resolve to the same client when
+// aggregating WMS positions, billing docs and manual values together.
+export function manualClientKey(client) {
+  return String(client || '').trim().replace(/\s+/g, '_').toUpperCase();
+}
+
+// Read every client's manual values for ONE month — for aggregate views
+// (Dashboard / P&L). Scans the collection once and filters by `month`,
+// mirroring how the Dashboard already loads the whole `billing` collection.
+//
+// Returns { byClient: { CHAVE: {client, wms_portal, armazenagem, frete} },
+//           collisions: [...], error }
+// Never throws: a failed read degrades to an empty map plus an `error`.
+//
+// If two documents normalize to the same client key (same client written with
+// different spelling), their values are SUMMED and the key is reported in
+// `collisions` — dropping one would silently lose revenue.
+export async function getManualBillingMonth(month) {
+  const out = { byClient: {}, collisions: [], error: null };
+  if (!month) return out;
+  try {
+    const snap = await getDocs(collection(db, 'faturamento_manual'));
+    const seen = new Set();
+    snap.forEach(d => {
+      const data = d.data() || {};
+      if (data.month !== month) return;
+      const key = manualClientKey(data.client);
+      if (!key) return;
+      if (seen.has(key)) out.collisions.push(key); else seen.add(key);
+      const prev = out.byClient[key];
+      out.byClient[key] = {
+        client: prev?.client || String(data.client || '').trim(),
+        wms_portal:  (prev?.wms_portal  || 0) + parseNumberBR(data.wms_portal),
+        armazenagem: (prev?.armazenagem || 0) + parseNumberBR(data.armazenagem),
+        frete:       (prev?.frete       || 0) + parseNumberBR(data.frete),
+      };
+    });
+    return out;
+  } catch (e) {
+    console.error('[faturamento] leitura da coleção faturamento_manual falhou', e);
+    return {
+      ...out,
+      error: `Não foi possível ler faturamento_manual (${e?.code || e?.message || 'erro'}). Verifique as regras do Firestore.`,
+    };
+  }
+}
+
+// Read a client's manual values for one month.
+// Returns { exists, wms_portal, armazenagem, error } and never throws:
+// a failed read degrades to zeros plus an `error` the UI can surface.
+export async function getManualBilling(client, month) {
+  const empty = { exists: false, wms_portal: 0, armazenagem: 0, frete: 0, error: null };
+  if (!client || !month) return empty;
+  const id = manualBillingKey(client, month);
+  try {
+    const snap = await getDoc(doc(db, 'faturamento_manual', id));
+    if (!snap.exists()) return empty;
+    const d = snap.data() || {};
+    return {
+      exists: true,
+      wms_portal: parseNumberBR(d.wms_portal),
+      armazenagem: parseNumberBR(d.armazenagem),
+      frete: parseNumberBR(d.frete),
+      error: null,
+    };
+  } catch (e) {
+    console.error(`[faturamento] leitura de faturamento_manual/${id} falhou`, e);
+    return {
+      ...empty,
+      error: `Não foi possível ler faturamento_manual/${id} (${e?.code || e?.message || 'erro'}). Verifique as regras do Firestore.`,
+    };
+  }
+}
+
+// Write a client's manual values for one month. Accepts "1234,56", "1234.56"
+// or a Number; always persists plain Numbers. `merge` keeps any other field
+// on the doc intact and, more importantly, keeps the write confined to this
+// single {cliente}_{mês} document.
+export async function saveManualBilling(client, month, values) {
+  if (!client || !month) throw new Error('Cliente e mês são obrigatórios');
+  const id = manualBillingKey(client, month);
+  const payload = {
+    client: String(client).trim(),
+    month,
+    updatedAt: new Date().toISOString(),
+  };
+  MANUAL_BILLING_FIELDS.forEach(f => {
+    if (f in (values || {})) payload[f] = parseNumberBR(values[f]);
+  });
+  await setDoc(doc(db, 'faturamento_manual', id), payload, { merge: true });
+  return payload;
 }
 
  
