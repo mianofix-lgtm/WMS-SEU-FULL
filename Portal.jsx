@@ -28,6 +28,20 @@ function cellDisplay(c) {
   return null;
 }
 
+// Um lançamento do faturamento pode vir em dois formatos: o novo, com uma lista
+// de `itens`, e o antigo, com um único produto no próprio lançamento. Sempre
+// devolve uma lista de itens — mesma leitura tolerante que Billing.jsx faz.
+function saleItemsOf(s) {
+  if (Array.isArray(s?.itens) && s.itens.length) return s.itens;
+  return [{
+    sku: s?.sku || '',
+    nome: s?.produto || s?.descCustom || '',
+    canal: s?.canal || '-',
+    qtd: s?.qtd ?? 1,
+    valor: s?.valor ?? 0,
+  }];
+}
+
 export default function Portal() {
   const { user, setUser } = useAuth();
   const nav = useNavigate();
@@ -164,10 +178,13 @@ export default function Portal() {
     if (billingData?.sales) {
       const byChannel = {};
       billingData.sales.forEach(s => {
-        if (!byChannel[s.canal]) byChannel[s.canal] = { count: 0, units: 0, valor: 0 };
-        byChannel[s.canal].count++;
-        byChannel[s.canal].units += s.qtd||1;
-        byChannel[s.canal].valor += s.valor||0;
+        saleItemsOf(s).forEach(it => {
+          const ch = it.canal || '-';
+          if (!byChannel[ch]) byChannel[ch] = { count: 0, units: 0, valor: 0 };
+          byChannel[ch].count++;
+          byChannel[ch].units += parseInt(it.qtd) || 1;
+          byChannel[ch].valor += it.valor || 0;
+        });
       });
       act.channels = byChannel;
     }
@@ -332,11 +349,11 @@ export default function Portal() {
 
             {billingData.sales.length > 0 && <>
               <div style={{fontSize:13,fontWeight:700,color:'#00C896',textTransform:'uppercase',letterSpacing:1,marginBottom:8,marginTop:24}}>Serviços</div>
-              <table className="p-table"><thead><tr><th>Data</th><th>Nº</th><th>Canal</th><th>Produto</th><th style={{textAlign:'right'}}>Qtd</th><th style={{textAlign:'right'}}>Valor</th></tr></thead><tbody>
-                {billingData.sales.map((s,i) => (
-                  <tr key={i}><td style={{fontSize:12,color:'#8B8D97'}}>{new Date(s.data).toLocaleDateString('pt-BR')}</td><td style={{fontFamily:'monospace',fontSize:12}}>{s.numero||'-'}</td><td><span className="p-badge">{s.canal}</span></td><td>{s.produto||'-'}</td><td style={{textAlign:'right'}}>{s.qtd}</td><td style={{textAlign:'right',fontWeight:700}}>R$ {(s.valor||0).toFixed(2)}</td></tr>
-                ))}
-                <tr style={{background:'#00C89610'}}><td colSpan={5} style={{fontWeight:800}}>Total</td><td style={{textAlign:'right',fontWeight:800,color:'#00C896'}}>R$ {billingData.sales.reduce((s,v)=>s+(v.valor||0),0).toLocaleString('pt-BR',{minimumFractionDigits:2})}</td></tr>
+              <table className="p-table"><thead><tr><th>Data</th><th>Nº</th><th>SKU</th><th>Canal</th><th>Produto</th><th style={{textAlign:'right'}}>Qtd</th><th style={{textAlign:'right'}}>Valor</th></tr></thead><tbody>
+                {billingData.sales.flatMap((s,i) => saleItemsOf(s).map((it,j) => (
+                  <tr key={`${i}_${j}`}><td style={{fontSize:12,color:'#8B8D97'}}>{new Date(s.data).toLocaleDateString('pt-BR')}</td><td style={{fontFamily:'monospace',fontSize:12}}>{s.numero||'-'}</td><td style={{fontFamily:'monospace',fontSize:12}}>{it.sku||'-'}</td><td><span className="p-badge">{it.canal}</span></td><td>{it.nome||'-'}</td><td style={{textAlign:'right'}}>{it.qtd}</td><td style={{textAlign:'right',fontWeight:700}}>R$ {(it.valor||0).toFixed(2)}</td></tr>
+                )))}
+                <tr style={{background:'#00C89610'}}><td colSpan={6} style={{fontWeight:800}}>Total</td><td style={{textAlign:'right',fontWeight:800,color:'#00C896'}}>R$ {billingData.sales.reduce((s,v)=>s+(v.valor||0),0).toLocaleString('pt-BR',{minimumFractionDigits:2})}</td></tr>
               </tbody></table>
             </>}
           </div>)}
