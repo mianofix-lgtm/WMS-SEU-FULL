@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef, Fragment } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from './App.jsx';
 import { db, getWmsData, getPricing, DEFAULT_PRICES, logAction, getManualBilling, saveManualBilling, parseNumberBR } from './firebase.js';
@@ -41,6 +41,31 @@ const DEFAULT_FORM = {
   canal:'Full ML', qtd:'1', valorUnit:'', descCustom:'',
   adds: DEFAULT_ADDS,
 };
+
+// Legacy canal names ('Flex', 'Correios', 'Places', 'Preparo Full ML', 'Kit')
+// collapse onto the current SERVICE_CONFIG keys, so filter and grouping treat a
+// legacy entry as the same service type the edit form loads it as.
+function canalKeyOf(canal) {
+  if (SERVICE_CONFIG[canal]) return canal;
+  if (canal === 'Preparo Full ML') return 'Full ML';
+  if (canal === 'Flex') return 'Envio Flex';
+  if (canal === 'Correios' || canal === 'Places') return 'Correios/Places';
+  return 'Outros';
+}
+
+function canalLabel(canal) {
+  const k = canalKeyOf(canal);
+  return SERVICE_CONFIG[k]?.label || canal;
+}
+
+// Filter buttons and groups follow the order of the service dropdown.
+const CANAL_ORDER = Object.keys(SERVICE_CONFIG);
+
+// Effective date of a sale: the typed sale date, else the record timestamp.
+const saleTime = (s) =>
+  s.dataVenda ? new Date(s.dataVenda + 'T12:00:00').getTime()
+  : s.data ? new Date(s.data).getTime()
+  : 0;
 
 function canalColor(canal) {
   if (canal==='Full ML'||canal==='Preparo Full ML') return {bg:'#00C89620',c:'#00C896'};
@@ -123,6 +148,10 @@ export default function Billing() {
   const [coletaData, setColetaData] = useState([]);
   const [positionWarnings, setPositionWarnings] = useState([]);
   const [tab, setTab] = useState('resumo');
+  // Presentation-only state for the sales list: nothing here changes values,
+  // what gets saved, the PDF or the month total.
+  const [filterCanal, setFilterCanal] = useState('all');
+  const [groupByCanal, setGroupByCanal] = useState(false);
   // Manual per-client/per-month values (faturamento_manual/{cliente}_{YYYY-MM}).
   // Never derived: no stored document means zero.
   const [manual, setManual] = useState({ wms_portal: 0, armazenagem: 0, frete: 0 });
@@ -183,6 +212,9 @@ export default function Billing() {
   async function loadClientData() {
     // Any open inline editor belongs to the previous selection — close it.
     setEditingField(null);
+    // The previous selection's service types may not exist here; a stale filter
+    // would show an empty list for no visible reason.
+    setFilterCanal('all');
     const reqKey = `${selClient}||${month}`;
     loadKeyRef.current = reqKey;
     const stale = () => loadKeyRef.current !== reqKey;
@@ -317,10 +349,7 @@ export default function Billing() {
       else if (cfg.type === 'valor') adds[a.key] = {active:true, valor:String(a.valor||'')};
       else adds[a.key] = {active:true, desc:a.desc||'', valor:String(a.valor||'')};
     });
-    const canalKey = SERVICE_CONFIG[s.canal] ? s.canal :
-      s.canal==='Preparo Full ML'?'Full ML': s.canal==='Flex'?'Envio Flex':
-      s.canal==='Correios'||s.canal==='Places'?'Correios/Places':
-      s.canal==='Triagem Devoluções'?'Triagem Devoluções':'Outros';
+    const canalKey = canalKeyOf(s.canal);
     setNewSale({
       dataVenda: s.dataVenda || (s.data ? s.data.substring(0,10) : ''),
       numero: s.numero || '',
@@ -485,6 +514,38 @@ tr:nth-child(even){background:#fafafa;}
     return main + extra;
   }, [newSale, PRICES]);
 
+  // ─── Sales list presentation (filter + grouping) ───
+  // Derived from `sales` for display only. The grouping subtotals are a plain
+  // sum of each sale's own stored `valor` — no value is recomputed here.
+  const canalGroups = useMemo(() => {
+    const map = new Map();
+    sales.forEach(s => {
+      const key = canalKeyOf(s.canal);
+      if (!map.has(key)) map.set(key, { key, label: canalLabel(s.canal), count: 0, total: 0, sales: [] });
+      const g = map.get(key);
+      g.count++;
+      g.total += s.valor || 0;
+      g.sales.push(s);
+    });
+    // Newest first inside each group, matching the flat list's default feel.
+    map.forEach(g => g.sales.sort((a, b) => saleTime(b) - saleTime(a)));
+    const orderOf = (k) => { const i = CANAL_ORDER.indexOf(k); return i === -1 ? CANAL_ORDER.length : i; };
+    return [...map.values()].sort((a, b) => orderOf(a.key) - orderOf(b.key) || a.label.localeCompare(b.label));
+  }, [sales]);
+
+  // A filter for a type that no longer exists would silently show nothing.
+  const activeFilter = (filterCanal !== 'all' && !canalGroups.some(g => g.key === filterCanal)) ? 'all' : filterCanal;
+
+  const visibleSales = useMemo(
+    () => activeFilter === 'all' ? sales : sales.filter(s => canalKeyOf(s.canal) === activeFilter),
+    [sales, activeFilter]
+  );
+
+  const visibleGroups = useMemo(
+    () => activeFilter === 'all' ? canalGroups : canalGroups.filter(g => g.key === activeFilter),
+    [canalGroups, activeFilter]
+  );
+
   const totals = useMemo(() => {
     const salesByChannel = {};
     sales.forEach(s => {
@@ -519,6 +580,65 @@ tr:nth-child(even){background:#fafafa;}
     });
     return { salesByChannel, palletsRefCost, positionsRefCost, armazenagem, frete, salesTotal, wms, total, activePallets: pallets.filter(p=>!p.saida).length, autoFullItems, wmsPositions };
   }, [sales, pallets, manual, PRICES, clientPositions, coletaData, month, selClient]);
+
+  // ─── Sales list rendering, shared by the flat and grouped views ───
+  const chipStyle = (active, col) => ({
+    padding:'6px 12px', borderRadius:6, fontSize:12, fontWeight:700, cursor:'pointer',
+    fontFamily:'inherit', transition:'.15s', whiteSpace:'nowrap',
+    background: active ? (col?.c || '#00C896') : '#161820',
+    color:      active ? '#0F1117' : (col?.c || '#C0C2CC'),
+    border:     `1px solid ${active ? (col?.c || '#00C896') : '#1E2028'}`,
+  });
+
+  const salesHead = (
+    <thead><tr>
+      <th style={S.th}>Data</th><th style={S.th}>Nº Venda</th><th style={S.th}>Nº Envio</th><th style={S.th}>Produto</th><th style={S.th}>Serviço</th><th style={{...S.th,textAlign:'right'}}>Qtd</th><th style={{...S.th,textAlign:'right'}}>Valor Unit.</th><th style={{...S.th,textAlign:'right'}}>Total</th><th style={S.th}></th>
+    </tr></thead>
+  );
+
+  function saleRow(s) {
+    const col = canalColor(canalKeyOf(s.canal));
+    const hasAdds = s.adicionais && s.adicionais.length > 0;
+    return (
+      <tr key={s.id} style={{background:editingSale===s.id?'#fbbf2410':'transparent'}}>
+        <td style={{...S.td,fontSize:12,color:'#8B8D97'}}>{s.dataVenda ? new Date(s.dataVenda+'T12:00:00').toLocaleDateString('pt-BR') : new Date(s.data).toLocaleDateString('pt-BR')}</td>
+        <td style={{...S.td,fontFamily:'monospace',fontSize:12}}>{s.numero||'-'}</td>
+        <td style={{...S.td,fontFamily:'monospace',fontSize:12,color:'#93c5fd'}}>{s.numEnvio||'-'}</td>
+        <td style={S.td}>{s.produto}</td>
+        <td style={S.td}>
+          <div className="has-adds">
+            <span style={{padding:'2px 8px',borderRadius:4,fontSize:11,fontWeight:700,background:col.bg,color:col.c}}>
+              {canalLabel(s.canal)}
+            </span>
+            {hasAdds && <span style={{background:'#00C896',color:'#0F1117',borderRadius:10,fontSize:10,fontWeight:800,padding:'1px 5px'}}>+{s.adicionais.length}</span>}
+            {hasAdds && (
+              <div className="add-tip">
+                <div style={{fontWeight:700,color:'#00C896',fontSize:12,marginBottom:6}}>{canalLabel(s.canal)}</div>
+                <div style={{color:'#C0C2CC',fontSize:11,marginBottom:3}}>
+                  Principal: {s.qtd} × R$ {(s.valorUnitario||0).toFixed(2)} = <b style={{color:'#fff'}}>R$ {((s.valorUnitario||0)*(s.qtd||1)).toFixed(2)}</b>
+                </div>
+                {s.adicionais.map((a,i) => (
+                  <div key={i} style={{color:'#C0C2CC',fontSize:11,marginBottom:2}}>
+                    {a.label}{a.desc?` — ${a.desc}`:''}: {a.qtd>1?`${a.qtd} × R$${(a.valorUnit||0).toFixed(2)} = `:''}<b style={{color:'#fff'}}>R$ {(a.valor||0).toFixed(2)}</b>
+                  </div>
+                ))}
+                <div style={{borderTop:'1px solid #2a2d3a',marginTop:6,paddingTop:6,color:'#00C896',fontWeight:700,fontSize:12}}>
+                  Total: R$ {(s.valor||0).toFixed(2)}
+                </div>
+              </div>
+            )}
+          </div>
+        </td>
+        <td style={{...S.td,textAlign:'right'}}>{s.qtd}</td>
+        <td style={{...S.td,textAlign:'right',color:'#8B8D97'}}>R$ {(s.valorUnitario ?? (s.qtd?(s.valor||0)/(s.qtd||1):(s.valor||0))).toFixed(2)}</td>
+        <td style={{...S.td,textAlign:'right',fontWeight:700}}>R$ {(s.valor||0).toFixed(2)}</td>
+        <td style={S.td}><div style={{display:'flex',gap:4}}>
+          <button onClick={()=>editSale(s)} style={{padding:'4px 8px',background:'#1e3a5f',border:'none',borderRadius:4,color:'#93c5fd',fontSize:11,cursor:'pointer',fontFamily:'inherit'}}>✎</button>
+          <button onClick={()=>removeSale(s.id)} style={S.btnDel}>✕</button>
+        </div></td>
+      </tr>
+    );
+  }
 
   if (loading) return <div style={S.loadPage}><div style={{color:'#00C896',fontSize:16}}>Carregando...</div></div>;
 
@@ -820,56 +940,70 @@ tr:nth-child(even){background:#fafafa;}
 
             {/* Sales list */}
             <div style={S.card}>
-              <h3 style={{fontSize:14,fontWeight:700,marginBottom:12}}>{sales.length} lançamentos</h3>
+              <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:12,flexWrap:'wrap',marginBottom:12}}>
+                <h3 style={{fontSize:14,fontWeight:700}}>
+                  {visibleSales.length} {visibleSales.length === 1 ? 'lançamento' : 'lançamentos'}
+                  {activeFilter !== 'all' && <span style={{color:'#8B8D97',fontWeight:600}}> de {sales.length}</span>}
+                </h3>
+                {sales.length > 0 && (
+                  <button onClick={()=>setGroupByCanal(g=>!g)}
+                    style={{padding:'7px 14px',borderRadius:7,fontSize:12,fontWeight:700,cursor:'pointer',fontFamily:'inherit',
+                      background:groupByCanal?'#00C896':'#161820', color:groupByCanal?'#0F1117':'#C0C2CC',
+                      border:`1px solid ${groupByCanal?'#00C896':'#1E2028'}`}}>
+                    ☰ Agrupar por serviço{groupByCanal ? ' ✓' : ''}
+                  </button>
+                )}
+              </div>
+
+              {canalGroups.length > 1 && (
+                <div style={{display:'flex',gap:6,flexWrap:'wrap',marginBottom:14}}>
+                  <button onClick={()=>setFilterCanal('all')} style={chipStyle(activeFilter==='all')}>Todos ({sales.length})</button>
+                  {canalGroups.map(g => (
+                    <button key={g.key} onClick={()=>setFilterCanal(g.key)} style={chipStyle(activeFilter===g.key, canalColor(g.key))}>
+                      {g.label} ({g.count})
+                    </button>
+                  ))}
+                </div>
+              )}
+
               {sales.length === 0 ? <div style={{color:'#8B8D97',padding:20,textAlign:'center'}}>Nenhuma venda registrada neste mês.</div> : (
                 <div className="bill-table-wrap" style={{maxHeight:440,overflowY:'auto'}}>
-                  <table style={S.table}><thead><tr>
-                    <th style={S.th}>Data</th><th style={S.th}>Nº Venda</th><th style={S.th}>Nº Envio</th><th style={S.th}>Produto</th><th style={S.th}>Serviço</th><th style={{...S.th,textAlign:'right'}}>Qtd</th><th style={{...S.th,textAlign:'right'}}>Valor Unit.</th><th style={{...S.th,textAlign:'right'}}>Total</th><th style={S.th}></th>
-                  </tr></thead><tbody>
-                    {sales.map(s => {
-                      const col = canalColor(s.canal);
-                      const hasAdds = s.adicionais && s.adicionais.length > 0;
-                      return (
-                        <tr key={s.id} style={{background:editingSale===s.id?'#fbbf2410':'transparent'}}>
-                          <td style={{...S.td,fontSize:12,color:'#8B8D97'}}>{s.dataVenda ? new Date(s.dataVenda+'T12:00:00').toLocaleDateString('pt-BR') : new Date(s.data).toLocaleDateString('pt-BR')}</td>
-                          <td style={{...S.td,fontFamily:'monospace',fontSize:12}}>{s.numero||'-'}</td>
-                          <td style={{...S.td,fontFamily:'monospace',fontSize:12,color:'#93c5fd'}}>{s.numEnvio||'-'}</td>
-                          <td style={S.td}>{s.produto}</td>
-                          <td style={S.td}>
-                            <div className="has-adds">
-                              <span style={{padding:'2px 8px',borderRadius:4,fontSize:11,fontWeight:700,background:col.bg,color:col.c}}>
-                                {SERVICE_CONFIG[s.canal]?.label || s.canal}
-                              </span>
-                              {hasAdds && <span style={{background:'#00C896',color:'#0F1117',borderRadius:10,fontSize:10,fontWeight:800,padding:'1px 5px'}}>+{s.adicionais.length}</span>}
-                              {hasAdds && (
-                                <div className="add-tip">
-                                  <div style={{fontWeight:700,color:'#00C896',fontSize:12,marginBottom:6}}>{SERVICE_CONFIG[s.canal]?.label||s.canal}</div>
-                                  <div style={{color:'#C0C2CC',fontSize:11,marginBottom:3}}>
-                                    Principal: {s.qtd} × R$ {(s.valorUnitario||0).toFixed(2)} = <b style={{color:'#fff'}}>R$ {((s.valorUnitario||0)*(s.qtd||1)).toFixed(2)}</b>
-                                  </div>
-                                  {s.adicionais.map((a,i) => (
-                                    <div key={i} style={{color:'#C0C2CC',fontSize:11,marginBottom:2}}>
-                                      {a.label}{a.desc?` — ${a.desc}`:''}: {a.qtd>1?`${a.qtd} × R$${(a.valorUnit||0).toFixed(2)} = `:''}<b style={{color:'#fff'}}>R$ {(a.valor||0).toFixed(2)}</b>
+                  <table style={S.table}>
+                    {salesHead}
+                    <tbody>
+                      {!groupByCanal
+                        ? visibleSales.map(saleRow)
+                        : visibleGroups.map(g => {
+                            const col = canalColor(g.key);
+                            return (
+                              <Fragment key={g.key}>
+                                <tr>
+                                  <td colSpan={9} style={{padding:0,borderBottom:'none'}}>
+                                    <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:10,flexWrap:'wrap',
+                                      padding:'8px 12px',marginTop:10,background:col.bg,borderLeft:`3px solid ${col.c}`,borderRadius:'0 6px 6px 0'}}>
+                                      <span style={{fontSize:13,fontWeight:800,color:col.c}}>
+                                        {g.label}
+                                        <span style={{color:'#8B8D97',fontWeight:600}}> · {g.count} {g.count === 1 ? 'lançamento' : 'lançamentos'}</span>
+                                      </span>
                                     </div>
-                                  ))}
-                                  <div style={{borderTop:'1px solid #2a2d3a',marginTop:6,paddingTop:6,color:'#00C896',fontWeight:700,fontSize:12}}>
-                                    Total: R$ {(s.valor||0).toFixed(2)}
-                                  </div>
-                                </div>
-                              )}
-                            </div>
-                          </td>
-                          <td style={{...S.td,textAlign:'right'}}>{s.qtd}</td>
-                          <td style={{...S.td,textAlign:'right',color:'#8B8D97'}}>R$ {(s.valorUnitario ?? (s.qtd?(s.valor||0)/(s.qtd||1):(s.valor||0))).toFixed(2)}</td>
-                          <td style={{...S.td,textAlign:'right',fontWeight:700}}>R$ {(s.valor||0).toFixed(2)}</td>
-                          <td style={S.td}><div style={{display:'flex',gap:4}}>
-                            <button onClick={()=>editSale(s)} style={{padding:'4px 8px',background:'#1e3a5f',border:'none',borderRadius:4,color:'#93c5fd',fontSize:11,cursor:'pointer',fontFamily:'inherit'}}>✎</button>
-                            <button onClick={()=>removeSale(s.id)} style={S.btnDel}>✕</button>
-                          </div></td>
-                        </tr>
-                      );
-                    })}
-                  </tbody></table>
+                                  </td>
+                                </tr>
+                                {g.sales.map(saleRow)}
+                                <tr>
+                                  <td colSpan={7} style={{...S.td,textAlign:'right',fontWeight:700,color:'#8B8D97',fontSize:12,borderTop:`1px solid ${col.c}40`}}>
+                                    Subtotal {g.label}
+                                  </td>
+                                  <td style={{...S.td,textAlign:'right',fontWeight:900,color:col.c,borderTop:`1px solid ${col.c}40`}}>{money(g.total)}</td>
+                                  <td style={{...S.td,borderTop:`1px solid ${col.c}40`}}></td>
+                                </tr>
+                              </Fragment>
+                            );
+                          })}
+                    </tbody>
+                  </table>
+                  {visibleSales.length === 0 && (
+                    <div style={{color:'#8B8D97',padding:20,textAlign:'center',fontSize:13}}>Nenhum lançamento deste tipo neste mês.</div>
+                  )}
                 </div>
               )}
             </div>
